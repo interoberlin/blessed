@@ -24,4 +24,4 @@
  *  SOFTWARE.
  */
 
-int radio_init(void);
+int16_t radio_init(void);

@@ -26,7 +26,7 @@
 
 #include "radio.h"
 
-int radio_init(void)
+int16_t radio_init(void)
 {
 	return 0;
 }
