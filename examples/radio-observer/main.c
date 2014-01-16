@@ -44,37 +44,16 @@ static uint8_t idx = 0;
 static int16_t scan_window;
 static int16_t scan_interval;
 
-static __inline const char *pdu_type(uint8_t type)
+static __inline const char *format_address(const uint8_t *data)
 {
-	switch (type) {
-	case 0:
-		return "ADV_IND (0000)";
-	case 1:
-		return "ADV_DIRECT_IND (0001)";
-	case 2:
-		return "ADV_NONCONN_IND (0010)";
-	case 3:
-		return "SCAN_REQ (0011)";
-	case 4:
-		return "SCAN_RSP (0100)";
-	case 5:
-		return "CONNECT_REQ (0101)";
-	case 6:
-		return "ADV_SCAN_IND (0110)";
-	default:
-		return "Reserved (0111-1111)";
-	}
-}
-
-static __inline const char *format_payload(struct radio_packet *packet)
-{
-	static char payload[110];
+	static char address[18];
 	uint8_t i;
 
-	for (i = 0; i < packet->len - 2; i++)
-		sprintf(payload + 3*i, "%02x ", packet->pdu[i + 2]);
+	for (i = 0; i < 5; i++)
+		sprintf(address + 3*i, "%02x:", data[5-i]);
+	sprintf(address + 3*i, "%02x", data[5-i]);
 
-	return payload;
+	return address;
 }
 
 void scan_window_timeout(void *user_data)
@@ -92,35 +71,26 @@ void scan_interval_timeout(void *user_data)
 
 void radio_hdlr(uint8_t evt, void *data)
 {
-	struct radio_packet *packet;
-	uint8_t length;
+	struct radio_packet *packet = data;
 
 	if (evt != RADIO_EVT_RX_COMPLETED) {
 		ERROR("Unexpected radio evt: %u", evt);
 		return;
 	}
 
-	packet = data;
-	length = packet->pdu[1] & 0x3F;
-
-	DBG("ADV PACKET ON CHANNEL %u", channels[idx]);
-
-	if (length > RADIO_MAX_PDU - 2) {
-		DBG("Invalid length: %u", length);
-		return;
+	if (!packet->crcstatus) {
+		DBG("ch %u bad crc", channels[idx]);
+		goto recv;
 	}
 
-	DBG("CRC:     %s", packet->crcstatus ? "OK" : "BAD");
+	if ((packet->pdu[1] & 0x3F) < 8) {
+		DBG("ch %u bad length", channels[idx]);
+		goto recv;
+	}
 
-	if (packet->crcstatus == 0)
-		return;
+	DBG("ch %u (%s)", channels[idx], format_address(data + 2));
 
-	DBG("PDU:     %s", pdu_type(packet->pdu[0] & 0xF));
-	DBG("TxAdd:   %u", (packet->pdu[0] >> 6) & 0x1);
-	DBG("RxAdd:   %u", (packet->pdu[0] >> 7) & 0x1);
-	DBG("Length:  %u", length);
-	DBG("Payload: %s", format_payload(packet));
-
+recv:
 	radio_recv(channels[idx], ADV_CHANNEL_AA, ADV_CHANNEL_CRC);
 }
 
@@ -133,10 +103,6 @@ int main(void)
 
 	scan_window = timer_create(TIMER_SINGLESHOT, scan_window_timeout);
 	scan_interval = timer_create(TIMER_REPEATED, scan_interval_timeout);
-
-	DBG("Scanning with:");
-	DBG("scanWindow:   %u ms", SCAN_WINDOW);
-	DBG("scanInterval: %u ms", SCAN_INTERVAL);
 
 	radio_recv(channels[idx], ADV_CHANNEL_AA, ADV_CHANNEL_CRC);
 	timer_start(scan_window, SCAN_WINDOW, NULL);
