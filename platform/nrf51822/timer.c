@@ -124,6 +124,23 @@ int16_t timer_start(int16_t id, uint32_t ms, void *user_data)
 	ERROR_HANDLING(err_code);
 }
 
+int16_t timer_start_us(int16_t id, uint32_t us, void *user_data)
+{
+	uint32_t err_code;
+	uint32_t ticks;
+
+	if (id < 0)
+		return -EINVAL;
+
+	ticks = ROUNDED_DIV(APP_TIMER_TICKS(us, PRESCALER), 1000);
+
+	err_code = app_timer_start(id, ticks, user_data);
+	if (err_code == NRF_SUCCESS)
+		return 0;
+
+	ERROR_HANDLING(err_code);
+}
+
 int16_t timer_stop(int16_t id)
 {
 	uint32_t err_code;
