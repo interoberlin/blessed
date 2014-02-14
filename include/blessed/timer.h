@@ -27,6 +27,19 @@
 #define TIMER_SINGLESHOT		0
 #define TIMER_REPEATED			1
 
+#define TIME_EXP(exp, result)						\
+	do {								\
+		uint32_t max;						\
+		uint32_t before = timer_get_counter();			\
+		exp;							\
+		result = timer_get_counter();				\
+		max = timer_get_counter_max();				\
+		if (result >= before)					\
+			result -= before;				\
+		else							\
+			result += (uint64_t) (max - before);		\
+	} while (0)
+
 typedef void (*timer_cb) (void *user_data);
 
 int16_t timer_init(void);
@@ -34,3 +47,6 @@ int16_t timer_create(uint8_t type, timer_cb cb);
 int16_t timer_start(int16_t id, uint32_t ms, void *user_data);
 int16_t timer_start_us(int16_t id, uint32_t us, void *user_data);
 int16_t timer_stop(int16_t id);
+
+uint32_t timer_get_counter(void);
+uint32_t timer_get_counter_max(void);

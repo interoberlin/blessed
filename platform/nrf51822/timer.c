@@ -62,6 +62,16 @@
 static uint32_t APP_TIMER_BUF[CEIL_DIV(APP_TIMER_BUF_SIZE(MAX_TIMERS,
 				OP_QUEUE_SIZE + 1), sizeof(uint32_t))];
 
+uint32_t timer_get_counter(void)
+{
+	return NRF_RTC1->COUNTER;
+}
+
+uint32_t timer_get_counter_max(void)
+{
+	return 0xFFFFFF;
+}
+
 int16_t timer_init(void)
 {
 	if (!NRF_CLOCK->EVENTS_LFCLKSTARTED) {
