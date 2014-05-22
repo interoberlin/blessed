@@ -119,22 +119,15 @@ void RADIO_IRQHandler(void)
 		return;
 
 	if (old_status & STATUS_RX) {
-		packet.len = buf[1] + 2;
+		uint8_t len = buf[1] & 0x3F;
+		packet.len = len + 2;
 		packet.crcstatus = NRF_RADIO->CRCSTATUS;
 
-		/* Mount ADV PDU header */
-
-		/* Do the inverse process described in radio_send().
-		 *
+		/*
 		 * FIXME: These operation values only works for advertise
 		 * channel PDUs.
 		 */
-		packet.pdu[0] = buf[0];
-		packet.pdu[1] = ((buf[2] & 0x3) << 6) | (buf[1] & 0x3F);
-
-		/* Copy PDU payload */
-		memcpy(packet.pdu + 2, buf + 3, buf[1]);
-
+		memcpy(packet.pdu, buf, len);
 		handler(RADIO_EVT_RX_COMPLETED, &packet);
 	} else if (old_status & STATUS_TX) {
 		if (old_status & STATUS_NEXT_RX) {
@@ -175,12 +168,7 @@ int16_t radio_send(uint8_t ch, uint32_t aa, uint32_t crcinit,
 	 *
 	 * FIXME: These operation values only works for advertise channel PDUs.
 	 */
-	buf[0] = data[0];
-	buf[1] = data[1] & 0x3F;
-	buf[2] = (data[1] >> 6) & 0x3;
-
-	/* Copy PDU payload */
-	memcpy(buf + 3, data + 2, len - 2);
+	memcpy(buf, data, len);
 
 	NRF_RADIO->TASKS_TXEN = 1UL;
 	status |= STATUS_TX;
@@ -326,9 +314,10 @@ int16_t radio_init(radio_cb hdlr)
 	 *
 	 * FIXME: These header sizes only works for advertise channel PDUs
 	 */
-	NRF_RADIO->PCNF0 = (1UL << RADIO_PCNF0_S0LEN_Pos) |      /* 1 byte */
-				(6UL << RADIO_PCNF0_LFLEN_Pos) | /* 6 bits */
-				(2UL << RADIO_PCNF0_S1LEN_Pos);  /* 2 bits */
+
+	NRF_RADIO->PCNF0 = (1 << RADIO_PCNF0_S0LEN_Pos) | /* 1 byte */
+				(8 << RADIO_PCNF0_LFLEN_Pos) | /* 6 bits */
+				(0 << RADIO_PCNF0_S1LEN_Pos); /* 2 bits */
 
 	/* nRF51 Series Reference Manual v2.1, section 16.1.8, page 76
 	 * nRF51 Series Reference Manual v2.1, section 16.1.10-11, pages 78-80
