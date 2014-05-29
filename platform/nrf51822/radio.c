@@ -30,6 +30,7 @@
 #include <nrf51_bitfields.h>
 
 #include <blessed/errcodes.h>
+#include <blessed/log.h>
 
 #include "radio.h"
 #include "nrf51822.h"
@@ -43,11 +44,12 @@
 #define STATUS_INITIALIZED		1
 #define STATUS_RX			2
 #define STATUS_TX			4
+#define STATUS_NEXT_RX			8
 #define STATUS_BUSY			(STATUS_RX | STATUS_TX)
 
 static radio_cb handler;
 static uint8_t buf[MAX_BUF_LEN];
-static uint8_t status;
+static uint32_t status;
 
 static __inline int8_t ch2freq(uint8_t ch)
 {
@@ -103,6 +105,11 @@ void RADIO_IRQHandler(void)
 	struct radio_packet packet;
 	uint8_t old_status;
 
+	if (NRF_RADIO->EVENTS_READY) {
+		NRF_RADIO->EVENTS_READY = 0UL;
+		return;
+	}
+
 	NRF_RADIO->EVENTS_END = 0UL;
 
 	old_status = status;
@@ -129,8 +136,16 @@ void RADIO_IRQHandler(void)
 		memcpy(packet.pdu + 2, buf + 3, buf[1]);
 
 		handler(RADIO_EVT_RX_COMPLETED, &packet);
-	} else if (old_status & STATUS_TX)
-		handler(RADIO_EVT_TX_COMPLETED, NULL);
+	} else if (old_status & STATUS_TX) {
+		if (old_status & STATUS_NEXT_RX) {
+			handler(RADIO_EVT_TX_COMPLETED_RX_NEXT, NULL);
+
+			status |= STATUS_RX;
+			NRF_RADIO->SHORTS &= ~RADIO_SHORTS_DISABLED_RXEN_Msk;
+		}
+		else
+			handler(RADIO_EVT_TX_COMPLETED, NULL);
+	}
 }
 
 int16_t radio_send(uint8_t ch, uint32_t aa, uint32_t crcinit,
@@ -184,6 +199,24 @@ int16_t radio_recv(uint8_t ch, uint32_t aa, uint32_t crcinit)
 
 	NRF_RADIO->TASKS_RXEN = 1UL;
 	status |= STATUS_RX;
+
+	return 0;
+}
+
+int16_t radio_send_then_recv(uint8_t ch, uint32_t aa, uint32_t crcinit,
+					const uint8_t *data, uint8_t len)
+{
+	int16_t err_code;
+
+	NRF_RADIO->SHORTS |= RADIO_SHORTS_DISABLED_RXEN_Msk;
+
+	err_code = radio_send(ch, aa, crcinit, data, len);
+	if (err_code < 0) {
+		NRF_RADIO->SHORTS &= ~RADIO_SHORTS_DISABLED_RXEN_Msk;
+		return err_code;
+	}
+
+	status |= STATUS_NEXT_RX;
 
 	return 0;
 }
@@ -312,8 +345,8 @@ int16_t radio_init(radio_cb hdlr)
 					| (RADIO_SHORTS_END_DISABLE_Enabled
 					<< RADIO_SHORTS_END_DISABLE_Pos);
 
-	/* Trigger RADIO interruption when an END event happens */
-	NRF_RADIO->INTENSET = RADIO_INTENSET_END_Msk;
+	/* Trigger RADIO interruption when these event happens */
+	NRF_RADIO->INTENSET = RADIO_INTENSET_END_Msk | RADIO_INTENSET_READY_Msk;
 
 	NVIC_SetPriority(RADIO_IRQn, IRQ_PRIORITY_HIGH);
 	NVIC_ClearPendingIRQ(RADIO_IRQn);

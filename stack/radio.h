@@ -38,6 +38,8 @@
  */
 #define RADIO_EVT_TX_COMPLETED		2
 
+#define RADIO_EVT_TX_COMPLETED_RX_NEXT	3
+
 typedef enum radio_power {
 	RADIO_POWER_4_DBM,
 	RADIO_POWER_0_DBM,
@@ -61,6 +63,8 @@ int16_t radio_init(radio_cb hdlr);
 
 int16_t radio_recv(uint8_t ch, uint32_t aa, uint32_t crcinit);
 int16_t radio_send(uint8_t ch, uint32_t aa, uint32_t crcinit,
+					const uint8_t *data, uint8_t len);
+int16_t radio_send_then_recv(uint8_t ch, uint32_t aa, uint32_t crcinit,
 					const uint8_t *data, uint8_t len);
 int16_t radio_stop(void);
 
