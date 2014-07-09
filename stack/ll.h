@@ -109,6 +109,7 @@ int16_t ll_scan_stop(void);
 
 /* Initiating a connection */
 int16_t ll_set_connection_params(ll_conn_params_t* conn_params);
+int16_t ll_set_data_ch_map(uint64_t ch_map);
 int16_t ll_initiate_connection(uint32_t interval, uint32_t window,
 	bdaddr_t* peer_addresses, uint16_t num_addresses);
 int16_t ll_initiate_cancel(void);

@@ -93,6 +93,14 @@ static uint8_t adv_ch_idx;
 static uint8_t prev_adv_ch_idx;
 static uint8_t adv_ch_map;
 
+/* Connection state channel map, 37 channels may be used
+ * Must not be modified directly, use function ll_set_data_ch_map() instead */
+static uint64_t data_ch_map;
+/* The number of used channels and the used channels table are computed only
+ * once by ll_set_data_ch_map() to speed up channel selection */
+static uint8_t data_ch_nb;
+static uint8_t data_ch_used[37];
+
 static uint32_t t_adv_pdu_interval;
 static uint32_t t_scan_window;
 
@@ -288,6 +296,34 @@ static __inline int16_t inc_adv_ch_idx(void)
 		return -1;
 
 	return 0;
+}
+
+/**@brief Function that implement the Data channel index selection
+ * Used in connection states to determine the BLE channel to use for the next
+ * connection event.
+ *
+ * See Link Layer specification Section 4.5.8, Core v4.1 p.2544
+ *
+ * @param[in,out] unmapped_channel: a pointer to a variable containing the
+ *	lastUnmappedChannel defined in LL spec. This variable will be updated
+ * 	to store the new unmappedChannel.
+ * @param[in] hop: the hopIncrement defined in LL spec (increment between 2
+ * 	unmapped channels)
+ *
+ * @return the data channel index to use for the next connection event, according
+ * 	to the global channel map data_ch_map.
+ */
+static __inline__ uint8_t data_ch_idx_selection(uint8_t *unmapped_channel,
+								uint8_t hop)
+{
+	*unmapped_channel = (*unmapped_channel + hop) % 37;
+
+	/* Return unmapped_channel if it is an used channel (1 in the ch. map)*/
+	if( data_ch_map & ((uint64_t)1UL << (*unmapped_channel)) )
+		return (*unmapped_channel);
+
+	else
+		return data_ch_used[(*unmapped_channel) % data_ch_nb];
 }
 
 /** Callback function for the "single shot" LL timer
@@ -489,6 +525,8 @@ static void init_default_conn_params(void)
 	ll_conn_params.supervision_timeout	= 100; /* 1s */
 	ll_conn_params.minimum_ce_length	= 0;
 	ll_conn_params.maximum_ce_length	= 16; /* 10 ms */
+
+	ll_set_data_ch_map(0x1FFFFFFFFF); /* Use all channels */
 }
 
 int16_t ll_init(const bdaddr_t *addr)
@@ -631,6 +669,41 @@ int16_t ll_set_connection_params(ll_conn_params_t* conn_params)
 
 	return 0;
 }
+
+/**@brief Set data channel map to specify which channels can be used in connection
+ * events.
+ *
+ * @param [in] ch_map: the new channel map ; every channel is represented by a bit
+ * 	with the LSB being channel index 0 and the 36th bit data channel 36.
+ * 	A 1 indicates that the channel is used.
+ */
+int16_t ll_set_data_ch_map(uint64_t ch_map)
+{
+	/* Mask to avoid channel indexes > 36 */
+	ch_map &= (uint64_t)(0x1FFFFFFFFF);
+
+	data_ch_map = ch_map;
+	data_ch_nb = 0;
+
+	/* Build remapping table (used indexes in acending order */
+	for(uint8_t i = 0; i < 37; i++)
+	{
+		if(ch_map & ((uint64_t)1UL << i))
+		{
+			data_ch_used[data_ch_nb] = i;
+			data_ch_nb++;
+		}
+	}
+
+	if(data_ch_nb < 2)
+	{
+		ERROR("Invalid channel map : 0x%10x", data_ch_map);
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
 
 /**@brief Try to establish a connection with the specified peer
  *
