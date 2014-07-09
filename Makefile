@@ -20,7 +20,7 @@ INCLUDE_PATHS		= $(PLATFORM_INCLUDE_PATHS)			\
 
 INCLUDES		= $(addprefix -I, $(INCLUDE_PATHS))
 
-CFLAGS			= -O2 -Wall $(PLATFORM_CFLAGS)			\
+CFLAGS			= -O2 -Wall -g $(PLATFORM_CFLAGS)			\
 			  $(INCLUDES)					\
 			  $(CONFIGS)
 
@@ -49,7 +49,7 @@ all: $(BUILD_PATH) $(LIB_TARGET)
 
 $(LIB_TARGET): $(C_OBJ_FILES) $(ASM_OBJ_FILES)
 	@echo "  AR\t$@"
-	@$(AR) $(ARFLAGS) $@ $(C_OBJ_FILES) $(ASM_OBJ_FILES) > /dev/null 2>&1
+	@$(AR) $(ARFLAGS) $@ $(C_OBJ_FILES) $(ASM_OBJ_FILES)
 	@echo " SIZE\t$@"
 	@$(SIZE) $@
 

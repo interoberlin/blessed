@@ -48,11 +48,18 @@ vpath %.c $(SOURCE_PATHS)
 vpath %.s $(ASM_PATHS)
 
 all: $(BUILD_PATH) $(BUILD_PATH)/$(PROJECT_TARGET).bin
+all: $(BUILD_PATH) $(BUILD_PATH)/$(PROJECT_TARGET).hex
 
 $(BUILD_PATH)/$(PROJECT_TARGET).bin: $(BUILD_PATH)/$(PROJECT_TARGET).out
 	@echo "OBJCOPY\t$@"
 	@$(OBJCOPY) -Obinary	$(BUILD_PATH)/$(PROJECT_TARGET).out	\
 				$(BUILD_PATH)/$(PROJECT_TARGET).bin
+
+#Generate *.hex file
+$(BUILD_PATH)/$(PROJECT_TARGET).hex: $(BUILD_PATH)/$(PROJECT_TARGET).out
+	@echo "OBJCOPY\t$@"
+	@$(OBJCOPY) -Oihex	$(BUILD_PATH)/$(PROJECT_TARGET).out	\
+				$(BUILD_PATH)/$(PROJECT_TARGET).hex
 
 $(BUILD_PATH)/$(PROJECT_TARGET).out: $(C_OBJ_FILES) $(ASM_OBJ_FILES)
 	@echo "  LD\t$@"

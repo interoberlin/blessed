@@ -4,8 +4,13 @@ config.h
 *.a
 *.bin
 *.out
+*.hex
 *.map
 *.log
 *.pyc
 *.sublime-project
 *.sublime-workspace
+*.launch
+*.settings
+*.project
+*.cproject
