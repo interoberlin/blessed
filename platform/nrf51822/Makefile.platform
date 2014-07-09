@@ -30,6 +30,7 @@ PLATFORM_INCLUDE_PATHS	= $(SDK_INCLUDE_PATH)				\
 			  $(SDK_INCLUDE_PATH)/gcc			\
 			  $(SDK_INCLUDE_PATH)/app_common		\
 			  $(SDK_INCLUDE_PATH)/ble/softdevice		\
+			  $(SDK_INCLUDE_PATH)/s110			\
 			  $(PLATFORM_PATH)
 
 PLATFORM_CFLAGS		= -mcpu=$(CPU)					\
@@ -41,6 +42,7 @@ PLATFORM_CFLAGS		= -mcpu=$(CPU)					\
 			  -mthumb					\
 			  -Werror					\
 			  -Wall						\
+			  -Wno-unused-local-typedefs						\
 			  -c
 
 PLATFORM_ASMFLAGS	= $(PLATFORM_CFLAGS)				\
