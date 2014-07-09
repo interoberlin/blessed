@@ -71,6 +71,23 @@ typedef enum ll_pdu {
 	LL_PDU_ADV_SCAN_IND
 } ll_pdu_t;
 
+/**@brief Connection parameters structure */
+/* TODO helper macros to convert to and from us */
+typedef struct {
+	/** range: 7.5ms -> 4s, unit: 1.25ms */
+	uint16_t	conn_interval_min;
+	/** range: 7.5ms -> 4s, unit: 1.25ms */
+	uint16_t	conn_interval_max;
+	/** range : 0 -> 499, slave latency in number of connection events */
+	uint16_t	conn_latency;
+	/** range: 100ms -> 32s, unit: 10ms */
+	uint16_t	supervision_timeout;
+	/** range: 0ms -> 40s, unit: 0.625ms, min. length of connection events*/
+	uint16_t	minimum_ce_length;
+	/** range: 0ms -> 40s, unit: 0.625ms, max. length of connection events*/
+	uint16_t	maximum_ce_length;
+} ll_conn_params_t;
+
 /* Callback function for LE advertising reports (scanning mode)
  * See HCI Funcional Specification Section 7.7.65.2, Core 4.1 page 1220 */
 typedef void (*adv_report_cb_t)(ll_pdu_t type, uint8_t addr_type,
@@ -89,3 +106,9 @@ int16_t ll_advertise_stop(void);
 int16_t ll_scan_start(uint8_t scan_type, uint32_t interval, uint32_t window,
 						adv_report_cb_t adv_report_cb);
 int16_t ll_scan_stop(void);
+
+/* Initiating a connection */
+int16_t ll_set_connection_params(ll_conn_params_t* conn_params);
+int16_t ll_initiate_connection(uint32_t interval, uint32_t window,
+	bdaddr_t* peer_addresses, uint16_t num_addresses);
+int16_t ll_initiate_cancel(void);

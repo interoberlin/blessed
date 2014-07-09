@@ -51,6 +51,8 @@
  */
 #define T_IFS				500
 
+#define LL_MAX_SIMULTANEOUS_CONNECTIONS	1
+
 /* Link Layer specification Section 1.1, Core 4.1 page 2499 */
 typedef enum ll_states {
 	LL_STATE_STANDBY,
@@ -98,6 +100,10 @@ static struct ll_pdu_adv pdu_adv;
 static struct ll_pdu_adv pdu_scan_rsp;
 
 static bool rx = false;
+static ll_conn_params_t ll_conn_params;
+/*Internal pointer to an array of accepted peer addresses */
+static bdaddr_t *ll_peer_addresses;
+static uint16_t ll_num_peer_addresses; /*Size of the accepter peers array */
 
 /** Timers used by the LL
  * Three timers are shared for the various states : one for triggering
@@ -148,6 +154,46 @@ stop:
 	radio_stop();
 }
 
+/* Check if the specified address is in the accepted peer addresses */
+static __inline bool is_addr_accepted(uint8_t addr_type, uint8_t *addr)
+{
+	bool result = false;
+
+	for(int i = 0; i < ll_num_peer_addresses; i++)
+	{
+		result = ((ll_peer_addresses+i)->type == addr_type
+				&& !memcmp(addr, (ll_peer_addresses+i)->addr,
+								BDADDR_LEN));
+		if(result)
+			break;
+	}
+
+/*	if(result)
+		DBG("Address %02x:%02x:%02x:%02x:%02x:%02x accepted", addr[0],
+				addr[1], addr[2], addr[3], addr[4], addr[5]);
+	else
+		DBG("Address %02x:%02x:%02x:%02x:%02x:%02x rejected", addr[0],
+				addr[1], addr[2], addr[3], addr[4], addr[5]);
+*/
+	return result;
+}
+
+/* Check if the specified address is mine */
+static __inline bool is_addr_mine(uint8_t addr_type, uint8_t *addr)
+{
+	bool result = (laddr->type == addr_type
+	&& !memcmp(addr, laddr->addr, BDADDR_LEN));
+
+/*	if(result)
+		DBG("Address %02x:%02x:%02x:%02x:%02x:%02x is mine", addr[0],
+				addr[1], addr[2], addr[3], addr[4], addr[5]);
+	else
+		DBG("Address %02x:%02x:%02x:%02x:%02x:%02x is not mine", addr[0],
+				addr[1], addr[2], addr[3], addr[4], addr[5]);
+*/
+	return result;
+}
+
 /**@brief Function called by the radio driver (PHY layer) on packet RX
  * Dispatch the event according to the LL state
  */
@@ -191,7 +237,30 @@ static void ll_on_radio_rx(const uint8_t *pdu, bool crc, bool active)
 			break;
 
 		case LL_STATE_INITIATING:
+			/*Answer to ADV_IND (connectable undirected advertising
+			event) and ADV_DIRECT_IND (connectable directed
+			advertising event) PDUs from accepted addresses with a
+			CONNECT_REQ PDU */
+
+			/* See Link Layer specification Section 2.3, Core 4.1
+			 * page 2505 */
+			if( (rcvd_pdu->type == LL_PDU_ADV_IND
+				&& is_addr_accepted(rcvd_pdu->tx_add,
+							rcvd_pdu->payload))
+			|| (rcvd_pdu->type == LL_PDU_ADV_DIRECT_IND
+				&& is_addr_accepted(rcvd_pdu->tx_add,
+							rcvd_pdu->payload)
+				&& is_addr_mine(rcvd_pdu->rx_add,
+						rcvd_pdu->payload+BDADDR_LEN)) )
+			{
+				/*TODO send CONNECT_REQ PDU
+				TODO go to CONNECTION_MASTER state
+				TODO notify application (cb function) */
+			}
+			break;
+
 		case LL_STATE_CONNECTION:
+			/* Not implemented */
 		case LL_STATE_STANDBY:
 		default:
 			/* Nothing to do */
@@ -246,11 +315,11 @@ static void t_ll_single_shot_cb(void)
 			break;
 
 		case LL_STATE_SCANNING:
+		case LL_STATE_INITIATING:
 			/* Called at the end of the scan window */
 			radio_stop();
 			break;
 
-		case LL_STATE_INITIATING:
 		case LL_STATE_CONNECTION:
 			/* Not implemented */
 		case LL_STATE_STANDBY:
@@ -271,6 +340,7 @@ static void t_ll_interval_cb(void)
 			break;
 
 		case LL_STATE_SCANNING:
+		case LL_STATE_INITIATING:
 			if(!inc_adv_ch_idx())
 				adv_ch_idx = first_adv_ch_idx();
 
@@ -281,7 +351,6 @@ static void t_ll_interval_cb(void)
 							t_ll_single_shot_cb);
 			break;
 
-		case LL_STATE_INITIATING:
 		case LL_STATE_CONNECTION:
 			/* Not implemented */
 		case LL_STATE_STANDBY:
@@ -414,6 +483,16 @@ static void init_adv_pdus(void)
 	ll_set_scan_response_data(NULL, 0);
 }
 
+static void init_default_conn_params(void)
+{
+	ll_conn_params.conn_interval_min	= 16; /* 20 ms */
+	ll_conn_params.conn_interval_max 	= 160; /* 200 ms */
+	ll_conn_params.conn_latency 		= 0;
+	ll_conn_params.supervision_timeout	= 100; /* 1s */
+	ll_conn_params.minimum_ce_length	= 0;
+	ll_conn_params.maximum_ce_length	= 16; /* 10 ms */
+}
+
 int16_t ll_init(const bdaddr_t *addr)
 {
 	int16_t err_code;
@@ -449,6 +528,7 @@ int16_t ll_init(const bdaddr_t *addr)
 	current_state = LL_STATE_STANDBY;
 
 	init_adv_pdus();
+	init_default_conn_params();
 
 	return 0;
 }
@@ -526,6 +606,70 @@ int16_t ll_scan_stop(void)
 	current_state = LL_STATE_STANDBY;
 
 	DBG("");
+
+	return 0;
+}
+
+/**@brief Set desired connection parameters
+ *
+ * @param [in] conn_params: a pointer to a new connection parameters struct
+ */
+int16_t ll_set_connection_params(ll_conn_params_t* conn_params)
+{
+	if(conn_params->conn_interval_max < conn_params->conn_interval_min)
+	{
+		ERROR("Min conn. interval must be lower than max interval");
+		return -EINVAL;
+	}
+
+	if(conn_params->maximum_ce_length < conn_params->minimum_ce_length)
+	{
+		ERROR("Min CE length must be lower than max CE length");
+		return -EINVAL;
+	}
+
+	/* TODO: check that the values are between min and max */
+	ll_conn_params = *conn_params;
+
+	return 0;
+}
+
+/**@brief Try to establish a connection with the specified peer
+ *
+ * @param [in] interval: the scanning interval in us (2.5ms -> 10.24s)
+ * @param [in] window: the scanning window in us (2.5ms -> 10.24s)
+ * @param [in] peer_addresses: a pointer to an array of Bluetooth addresses
+ * 	to try to connect
+ * @param [in] num_addresses: the size of the peer_addresses array
+ */
+int16_t ll_initiate_connection(uint32_t interval, uint32_t window,
+	bdaddr_t* peer_addresses, uint16_t num_addresses)
+{
+	if(window > interval)
+	{
+		ERROR("interval must be greater than window");
+		return -EINVAL;
+	}
+	if(peer_addresses == NULL || num_addresses == 0)
+	{
+		ERROR("at least one peer address must be specified");
+		return -EINVAL;
+	}
+
+	ll_peer_addresses = peer_addresses;
+	ll_num_peer_addresses = num_addresses;
+
+	/* Initiating state :
+	 * see Link Layer specification Section 4.4.4, Core v4.1 p.2537 */
+	t_scan_window = window;
+	int16_t err_code = timer_start(t_ll_interval, interval);
+	if (err_code < 0)
+		return err_code;
+
+	current_state = LL_STATE_INITIATING;
+	t_ll_interval_cb();
+
+	DBG("interval %uus, window %uus", interval, window);
 
 	return 0;
 }
