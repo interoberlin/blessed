@@ -303,7 +303,7 @@ int16_t radio_init(void)
 	 */
 	NRF_RADIO->CRCCNF =
 		(RADIO_CRCCNF_LEN_Three << RADIO_CRCCNF_LEN_Pos) |
-		(RADIO_CRCCNF_SKIP_ADDR_Skip << RADIO_CRCCNF_SKIP_ADDR_Pos);
+		(RADIO_CRCCNF_SKIPADDR_Skip << RADIO_CRCCNF_SKIPADDR_Pos);
 	NRF_RADIO->CRCPOLY = 0x100065B;
 
 	/* nRF51 Series Reference Manual v2.1, section 16.1.2, page 74
