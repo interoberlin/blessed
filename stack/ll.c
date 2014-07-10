@@ -81,6 +81,35 @@ struct __attribute__ ((packed)) ll_pdu_scan_req {
 	uint8_t adva[6];
 };
 
+/* Connection flags, used to keep track of various events and procedures in
+ * a connection */
+#define LL_CONN_FLAGS_ESTABLISHED	1	/* conn. created/established */
+
+/** This structure contains all the fields needed to establish and maintain a
+ * connection, on Master or Slave side. For a Master involved in multiple
+ * simultaneous connections, there must be one structure per connection.
+ *
+ * Note that several parameters : conn interval, slave latency, supervision
+ * timeout and channel map are defined for all connections in ll_conn_params
+ * structure.
+ *
+ * See Link Layer specification Section 4.5, Core 4.1 pages 2537-2547*/
+struct ll_conn_context {
+	uint32_t	access_address;	/**< Access Address */
+	uint32_t	crcinit;	/**< CRC init. value (3 bytes) */
+	uint8_t		hop;		/**< hopIncrement for ch. selection */
+	uint8_t		last_unmap_ch;	/**< last unmapped channel used */
+	uint16_t	conn_event_cnt;	/**< Connection Event counter */
+	uint16_t	superv_tmr;	/**< Connection supervision timer */
+	uint8_t 	sn;		/**< transmitSeqNum for ack. */
+	uint8_t		nesn;		/**< nextExpectedSeqNum for ack. */
+	uint8_t	*	tx_buffer;	/**< TX buffer, handled in app. */
+	uint8_t		tx_length;	/**< Nb of used bytes in TX buffer */
+	uint8_t	*	rx_buffer;	/**< RX buffer, handled in app. */
+	uint8_t		rx_length;	/**< Nb of used bytes in RX buffer */
+	uint32_t	flags; 		/**< conn. flags, see LL_CONN_FLAGS_* */
+};
+
 static const bdaddr_t *laddr;
 static ll_states_t current_state;
 
