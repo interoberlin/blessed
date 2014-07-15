@@ -291,7 +291,7 @@ static uint32_t generate_access_address(void)
  */
 static void ll_on_radio_rx(const uint8_t *pdu, bool crc, bool active)
 {
-	struct ll_pdu_adv *rcvd_pdu = (struct ll_pdu_adv*) pdu;
+	struct ll_pdu_adv *rcvd_adv_pdu;
 
 	switch(current_state) {
 		case LL_STATE_SCANNING:
@@ -303,11 +303,13 @@ static void ll_on_radio_rx(const uint8_t *pdu, bool crc, bool active)
 			/* Extract information from PDU and call
 			 * ll_adv_report_cb
 			 */
+			rcvd_adv_pdu = (struct ll_pdu_adv*) pdu;
 
-			ll_adv_report_cb(rcvd_pdu->type, rcvd_pdu->tx_add,
-						rcvd_pdu->payload,
-						rcvd_pdu->length - BDADDR_LEN,
-						rcvd_pdu->payload + BDADDR_LEN);
+			ll_adv_report_cb(rcvd_adv_pdu->type,
+					rcvd_adv_pdu->tx_add,
+					rcvd_adv_pdu->payload,
+					rcvd_adv_pdu->length - BDADDR_LEN,
+					rcvd_adv_pdu->payload + BDADDR_LEN);
 
 			/* Receive new packets while the radio is not explicitly
 			 * stopped
@@ -316,15 +318,17 @@ static void ll_on_radio_rx(const uint8_t *pdu, bool crc, bool active)
 			break;
 
 		case LL_STATE_ADVERTISING:
+			rcvd_adv_pdu = (struct ll_pdu_adv*) pdu;
+
 			if (pdu_adv.type != LL_PDU_ADV_IND &&
 					pdu_adv.type != LL_PDU_ADV_SCAN_IND)
 				break;
 
-			if (rcvd_pdu->type != LL_PDU_SCAN_REQ)
+			if (rcvd_adv_pdu->type != LL_PDU_SCAN_REQ)
 				break;
 
 			timer_stop(t_ll_ifs);
-			send_scan_rsp(rcvd_pdu);
+			send_scan_rsp(rcvd_adv_pdu);
 
 			break;
 
@@ -333,17 +337,17 @@ static void ll_on_radio_rx(const uint8_t *pdu, bool crc, bool active)
 			event) and ADV_DIRECT_IND (connectable directed
 			advertising event) PDUs from accepted addresses with a
 			CONNECT_REQ PDU */
-
+			rcvd_adv_pdu = (struct ll_pdu_adv *)(pdu);
 			/* See Link Layer specification Section 2.3, Core 4.1
 			 * page 2505 */
-			if( (rcvd_pdu->type == LL_PDU_ADV_IND
-				&& is_addr_accepted(rcvd_pdu->tx_add,
-							rcvd_pdu->payload))
-			|| (rcvd_pdu->type == LL_PDU_ADV_DIRECT_IND
-				&& is_addr_accepted(rcvd_pdu->tx_add,
-							rcvd_pdu->payload)
-				&& is_addr_mine(rcvd_pdu->rx_add,
-						rcvd_pdu->payload+BDADDR_LEN)) )
+			if( (rcvd_adv_pdu->type == LL_PDU_ADV_IND
+				&& is_addr_accepted(rcvd_adv_pdu->tx_add,
+							rcvd_adv_pdu->payload))
+			|| (rcvd_adv_pdu->type == LL_PDU_ADV_DIRECT_IND
+				&& is_addr_accepted(rcvd_adv_pdu->tx_add,
+							rcvd_adv_pdu->payload)
+				&& is_addr_mine(rcvd_adv_pdu->rx_add,
+					rcvd_adv_pdu->payload+BDADDR_LEN)) )
 			{
 				timer_stop(t_ll_single_shot);
 				timer_stop(t_ll_interval);
@@ -351,9 +355,9 @@ static void ll_on_radio_rx(const uint8_t *pdu, bool crc, bool active)
 				/* Complete CONNECT_REQ PDU with the
 				 * advertiser's address
 				 */
-				pdu_connect_req.rx_add = rcvd_pdu->tx_add;
+				pdu_connect_req.rx_add = rcvd_adv_pdu->tx_add;
 				memcpy(pdu_connect_req.payload+BDADDR_LEN,
-					rcvd_pdu->payload, BDADDR_LEN);
+					rcvd_adv_pdu->payload, BDADDR_LEN);
 
 				DBG("Sent CONNECT_REQ, transitioning to conn.\
 								state");
