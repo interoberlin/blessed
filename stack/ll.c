@@ -322,10 +322,31 @@ static void ll_on_radio_rx(const uint8_t *pdu, bool crc, bool active)
 				&& is_addr_mine(rcvd_pdu->rx_add,
 						rcvd_pdu->payload+BDADDR_LEN)) )
 			{
-				/*TODO send CONNECT_REQ PDU
-				TODO go to CONNECTION_MASTER state
-				TODO notify application (cb function) */
+				timer_stop(t_ll_single_shot);
+				timer_stop(t_ll_interval);
+
+				/* Complete CONNECT_REQ PDU with the
+				 * advertiser's address
+				 */
+				pdu_connect_req.rx_add = rcvd_pdu->tx_add;
+				memcpy(pdu_connect_req.payload+BDADDR_LEN,
+					rcvd_pdu->payload, BDADDR_LEN);
+
+				DBG("Sent CONNECT_REQ, transitioning to conn.\
+								state");
+
+				current_state = LL_STATE_CONNECTION_MASTER;
+
+				timer_start(t_ll_interval,
+					ll_conn_params.conn_interval_min*1250);
+				/* TODO notify application (cb function) */
 			}
+			else
+			{
+				radio_stop();
+				radio_recv(RADIO_FLAGS_TX_NEXT);
+			}
+
 			break;
 
 		case LL_STATE_CONNECTION_MASTER:
@@ -444,7 +465,13 @@ static void t_ll_interval_cb(void)
 
 			radio_prepare(adv_chs[adv_ch_idx],
 					LL_ACCESS_ADDRESS_ADV, LL_CRCINIT_ADV);
-			radio_recv(0);
+
+			if(current_state == LL_STATE_INITIATING) {
+				radio_recv(RADIO_FLAGS_TX_NEXT);
+				radio_set_out_buffer((uint8_t*)&pdu_connect_req);
+			} else
+				radio_recv(0);
+
 			timer_start(t_ll_single_shot, t_scan_window);
 			break;
 
@@ -647,10 +674,12 @@ static void init_connection_context(uint8_t conn_index)
 		payload->win_size = 8;
 	else
 		payload->win_size = ll_conn_params.conn_interval_min-1;
-	/* FIXME: how to get the remaining time before the interval timer
-	 * fires again ? We have to set the tx window offset according to this
+	/* The interval timer is set to fire every conn_interval_min just
+	 * after the CONNECT_REQ PDU is sent. We set the offset to
+	 * conn_interval_min - 3 to keep a wide window almost centered on the
+	 * first timer event.
 	 */
-	payload->win_offset = 0;
+	payload->win_offset = ll_conn_params.conn_interval_min-3;
 
 	payload->interval = ll_conn_params.conn_interval_min;
 	payload->latency = ll_conn_params.conn_latency;
@@ -878,6 +907,9 @@ int16_t ll_initiate_connection(uint32_t interval, uint32_t window,
 	/* Generate new connection parameters and init CONNECT_REQ PDU */
 	init_connection_context(ll_num_connections);
 	ll_num_connections++;
+
+	radio_set_callbacks(ll_on_radio_rx, NULL);
+
 
 	/* TODO : TX and RX buffers ! */
 
