@@ -178,6 +178,7 @@ static uint32_t t_scan_window;
 static struct ll_pdu_adv pdu_adv;
 static struct ll_pdu_adv pdu_scan_rsp;
 static struct ll_pdu_adv pdu_connect_req;
+static struct ll_pdu_data pdu_data_tx;
 
 static bool rx = false;
 static ll_conn_params_t ll_conn_params;
@@ -211,6 +212,9 @@ static void t_ll_interval_cb(void);
 
 /** Callback function to report advertisers (SCANNING state) */
 static adv_report_cb_t ll_adv_report_cb = NULL;
+
+/* Forward-declarations */
+static void ll_on_radio_tx(bool active);
 
 static __inline void send_scan_rsp(const struct ll_pdu_adv *pdu)
 {
@@ -300,6 +304,7 @@ static uint32_t generate_access_address(void)
 static void ll_on_radio_rx(const uint8_t *pdu, bool crc, bool active)
 {
 	struct ll_pdu_adv *rcvd_adv_pdu;
+	struct ll_pdu_data *rcvd_data_pdu;
 
 	switch(current_state) {
 		case LL_STATE_SCANNING:
@@ -375,6 +380,10 @@ static void ll_on_radio_rx(const uint8_t *pdu, bool crc, bool active)
 				timer_start(t_ll_interval,
 					ll_conn_params.conn_interval_min*1250,
 							t_ll_interval_cb);
+
+				radio_set_callbacks(ll_on_radio_rx,
+								ll_on_radio_tx);
+
 				/* TODO notify application (cb function) */
 			}
 			else
@@ -386,6 +395,41 @@ static void ll_on_radio_rx(const uint8_t *pdu, bool crc, bool active)
 			break;
 
 		case LL_STATE_CONNECTION_MASTER:
+			/* Receive a data PDU */
+			rcvd_data_pdu = (struct ll_pdu_data *)(pdu);
+
+			timer_stop(t_ll_ifs);
+
+			ll_conn_contexts[0].superv_tmr = 0;
+			ll_conn_contexts[0].flags |= LL_CONN_FLAGS_ESTABLISHED;
+
+			/* TODO : check CRC/MD bit to reply or close the CE */
+
+			/* TODO : implement ack/flow control according to
+			 * LL spec, section 4.5.9, Core 4.1 p. 2545
+			 */
+
+			/* LL Control isn't implemented at the moment, so reply
+			 * with an LL_UNKNOWN_RSP PDU to all LL Control PDUs
+			 */
+			if(rcvd_data_pdu->llid == LL_PDU_CONTROL)
+			{
+				pdu_data_tx.llid = LL_PDU_CONTROL;
+				pdu_data_tx.nesn = ll_conn_contexts[0].nesn;
+				pdu_data_tx.sn = ll_conn_contexts[0].sn;
+				pdu_data_tx.md = 0UL;
+				pdu_data_tx.length = 2;
+				/* LL_UNKNOWN_RSP Opcode */
+				pdu_data_tx.payload[0] = 0x07;
+				pdu_data_tx.payload[1] =
+						rcvd_data_pdu->payload[0];
+
+				radio_send((uint8_t *)(&pdu_data_tx), 0);
+			}
+
+			/* TODO : retrieve the data and notify the app. */
+
+			break;
 		case LL_STATE_CONNECTION_SLAVE:
 			/* Not implemented */
 		case LL_STATE_STANDBY:
@@ -514,6 +558,58 @@ static void t_ll_interval_cb(void)
 			break;
 
 		case LL_STATE_CONNECTION_MASTER:
+			/* LL spec, section 4.5, Core v4.1 p.2537-2547
+			 * LL spec, Section 2.4, Core 4.1 page 2511
+			 *
+			 * To test connection : send only Empty PDUs at the
+			 * moment
+			 */
+
+			/* Handle supervision timer which is reset every time a
+			 * new packet is received
+			 * NOTE: this doesn't respect the spec as the timer's
+			 * unit is connInterval
+			 */
+			if((!(ll_conn_contexts[0].flags & LL_CONN_FLAGS_ESTABLISHED) &&
+					ll_conn_contexts[0].superv_tmr >= 6) ||
+			((ll_conn_contexts[0].flags & LL_CONN_FLAGS_ESTABLISHED) &&
+					ll_conn_contexts[0].superv_tmr >=
+					(ll_conn_params.supervision_timeout /
+					ll_conn_params.conn_interval_min)))
+			{
+				timer_stop(t_ll_interval);
+				current_state = LL_STATE_STANDBY;
+				ll_num_connections--;
+				/* TODO notify the app. */
+				DBG("Connection lost (supervision timeout), \
+						timer value : %u",
+						ll_conn_contexts[0].superv_tmr);
+				return;
+			}
+
+			pdu_data_tx.llid = LL_PDU_DATA_FRAG_EMPTY;
+			pdu_data_tx.nesn = ll_conn_contexts[0].nesn;
+			pdu_data_tx.sn = ll_conn_contexts[0].sn;
+			pdu_data_tx.md = 0UL;
+			pdu_data_tx.length = 0;
+
+			radio_stop();
+			radio_prepare(data_ch_idx_selection(
+					&(ll_conn_contexts[0].last_unmap_ch),
+					ll_conn_contexts[0].hop),
+					ll_conn_contexts[0].access_address,
+					ll_conn_contexts[0].crcinit);
+
+			radio_send((uint8_t *)(&pdu_data_tx),
+							RADIO_FLAGS_RX_NEXT);
+
+			ll_conn_contexts[0].conn_event_cnt++;
+			ll_conn_contexts[0].superv_tmr++;
+
+			/* Next step : ll_on_radio_rx (receive a packet from
+			 * the slave) or t_ll_ifs_cb (RX timeout) */
+			break;
+
 		case LL_STATE_CONNECTION_SLAVE:
 			/* Not implemented */
 		case LL_STATE_STANDBY:
