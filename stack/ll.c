@@ -178,7 +178,9 @@ static uint32_t t_scan_window;
 static struct ll_pdu_adv pdu_adv;
 static struct ll_pdu_adv pdu_scan_rsp;
 static struct ll_pdu_adv pdu_connect_req;
-static struct ll_pdu_data pdu_data_tx;
+/* Outgoing packets for Connection state. Keep 1 packet per connection to allow
+ * re-sending old data packets in case of bad CRC or flow control. */
+static struct ll_pdu_data pdu_data_tx[LL_MAX_SIMULTANEOUS_CONNECTIONS];
 
 static bool rx = false;
 static ll_conn_params_t ll_conn_params;
@@ -298,6 +300,56 @@ static uint32_t generate_access_address(void)
 	return aa;
 }
 
+
+/**@brief Prepare the next Data Channel PDU to send in a connection.
+ *
+ * Use the tx_buffer and tx_len in ll_conn_contexts[conn_index].
+ *
+ * @param[in] conn_index: the connection index in case of multiple connections
+ * @param[in] control_pdu: if true, will issue a LL Control PDU with opCode
+ * 	LL_UNKNOWN_RSP (to answer to a received LL Control PDU) instead of a
+ * 	LL Data PDU
+ * @param[in] control_pdu_opcode: the opCode of the received LL Control PDU
+ */
+static void prepare_next_data_pdu(uint8_t conn_index, bool control_pdu,
+						uint8_t control_pdu_opcode)
+{
+	pdu_data_tx[conn_index].nesn = ll_conn_contexts[conn_index].nesn;
+	pdu_data_tx[conn_index].sn = ll_conn_contexts[conn_index].sn;
+	/* We assume that the master will send only 1 packet in every CE */
+	pdu_data_tx[conn_index].md = 0UL;
+
+	if(control_pdu)
+	{
+		/* LL Control isn't implemented at the moment, so reply
+		 * with an LL_UNKNOWN_RSP PDU to all LL Control PDUs */
+		pdu_data_tx[conn_index].llid = LL_PDU_CONTROL;
+		pdu_data_tx[conn_index].length = 2;
+		/* LL_UNKNOWN_RSP Opcode */
+		pdu_data_tx[conn_index].payload[0] = 0x07;
+		pdu_data_tx[conn_index].payload[1] = control_pdu_opcode;
+	}
+	else if(ll_conn_contexts[conn_index].tx_length > 0)
+	{
+		/* There is new data to send */
+		pdu_data_tx[conn_index].llid = LL_PDU_DATA_START_COMPLETE;
+		pdu_data_tx[conn_index].length =
+					ll_conn_contexts[conn_index].tx_length;
+		memcpy(pdu_data_tx[conn_index].payload,
+					ll_conn_contexts[conn_index].tx_buffer,
+					ll_conn_contexts[conn_index].tx_length);
+
+		/* Data in the TX buffer is now outdated */
+		ll_conn_contexts[conn_index].tx_length = 0;
+	}
+	else
+	{
+		/* No new data => send Empty Data PDU */
+		pdu_data_tx[conn_index].llid = LL_PDU_DATA_FRAG_EMPTY;
+		pdu_data_tx[conn_index].length = 0;
+	}
+}
+
 /**@brief Function called by the radio driver (PHY layer) on packet RX
  * Dispatch the event according to the LL state
  */
@@ -384,6 +436,9 @@ static void ll_on_radio_rx(const uint8_t *pdu, bool crc, bool active)
 				radio_set_callbacks(ll_on_radio_rx,
 								ll_on_radio_tx);
 
+				/* Prepare the Data PDU that will be sent */
+				prepare_next_data_pdu(0, false, 0x00);
+
 				/* TODO notify application (cb function) */
 			}
 			else
@@ -403,31 +458,71 @@ static void ll_on_radio_rx(const uint8_t *pdu, bool crc, bool active)
 			ll_conn_contexts[0].superv_tmr = 0;
 			ll_conn_contexts[0].flags |= LL_CONN_FLAGS_ESTABLISHED;
 
-			/* TODO : check CRC/MD bit to reply or close the CE */
-
-			/* TODO : implement ack/flow control according to
-			 * LL spec, section 4.5.9, Core 4.1 p. 2545
+			/* Hypothesis for simplification : the connection event
+			 * is closed when the slave has sent a packet,
+			 * regardless of CRC match or MD bit. The master will
+			 * only send one packet in each CE.
+			 * See LL spec, section 4.5.6, Core 4.1 p.2542
 			 */
 
-			/* LL Control isn't implemented at the moment, so reply
-			 * with an LL_UNKNOWN_RSP PDU to all LL Control PDUs
-			 */
-			if(rcvd_data_pdu->llid == LL_PDU_CONTROL)
+			/* Ack/flow control according to :
+			 * LL spec, section 4.5.9, Core 4.1 p. 2545 */
+			if(!crc)
 			{
-				pdu_data_tx.llid = LL_PDU_CONTROL;
-				pdu_data_tx.nesn = ll_conn_contexts[0].nesn;
-				pdu_data_tx.sn = ll_conn_contexts[0].sn;
-				pdu_data_tx.md = 0UL;
-				pdu_data_tx.length = 2;
-				/* LL_UNKNOWN_RSP Opcode */
-				pdu_data_tx.payload[0] = 0x07;
-				pdu_data_tx.payload[1] =
-						rcvd_data_pdu->payload[0];
-
-				radio_send((uint8_t *)(&pdu_data_tx), 0);
+				/* ignore incoming data
+				 * equivalent to a NACK => resend the old data
+				 * TODO : notify the app ? */
+				DBG("Packet with bad CRC received");
+				return;
 			}
 
-			/* TODO : retrieve the data and notify the app. */
+			if(rcvd_data_pdu->sn ==
+					(ll_conn_contexts[0].nesn & 0x01))
+			{
+				/* New incoming Data Channel PDU
+				* local NESN *may* be incremented to allow flow
+				* control */
+				ll_conn_contexts[0].nesn++;
+
+				/* Get data if the received packet wasn't a
+				 * LL Control PDU or an Empty PDU*/
+				if(rcvd_data_pdu->llid != LL_PDU_CONTROL &&
+						rcvd_data_pdu->length > 0)
+				{
+					ll_conn_contexts[0].rx_length =
+							rcvd_data_pdu->length;
+					memcpy(ll_conn_contexts[0].rx_buffer,
+							rcvd_data_pdu->payload,
+							rcvd_data_pdu->length);
+				}
+				/* TODO notify app that new data is available */
+			}
+			else
+			{
+				/* Old incoming Data Channel PDU => ignore */
+			}
+
+			if(rcvd_data_pdu->nesn ==
+						(ll_conn_contexts[0].sn & 0x01))
+			{
+				/* NACK => resend old data (do nothing)
+				 * TODO : notify the app ? */
+				DBG("NACK received");
+			}
+			else
+			{
+				/* ACK => send new data
+				 * TODO : notify the app ? */
+				ll_conn_contexts[0].sn++;
+
+				/* Prepare a new packet according to what was
+				 * just received */
+				if(rcvd_data_pdu->llid == LL_PDU_CONTROL)
+					prepare_next_data_pdu(0, true,
+						rcvd_data_pdu->payload[0]);
+				else
+					prepare_next_data_pdu(0, false, 0x00);
+			}
 
 			break;
 		case LL_STATE_CONNECTION_SLAVE:
@@ -560,9 +655,6 @@ static void t_ll_interval_cb(void)
 		case LL_STATE_CONNECTION_MASTER:
 			/* LL spec, section 4.5, Core v4.1 p.2537-2547
 			 * LL spec, Section 2.4, Core 4.1 page 2511
-			 *
-			 * To test connection : send only Empty PDUs at the
-			 * moment
 			 */
 
 			/* Handle supervision timer which is reset every time a
@@ -587,12 +679,6 @@ static void t_ll_interval_cb(void)
 				return;
 			}
 
-			pdu_data_tx.llid = LL_PDU_DATA_FRAG_EMPTY;
-			pdu_data_tx.nesn = ll_conn_contexts[0].nesn;
-			pdu_data_tx.sn = ll_conn_contexts[0].sn;
-			pdu_data_tx.md = 0UL;
-			pdu_data_tx.length = 0;
-
 			radio_stop();
 			radio_prepare(data_ch_idx_selection(
 					&(ll_conn_contexts[0].last_unmap_ch),
@@ -600,7 +686,7 @@ static void t_ll_interval_cb(void)
 					ll_conn_contexts[0].access_address,
 					ll_conn_contexts[0].crcinit);
 
-			radio_send((uint8_t *)(&pdu_data_tx),
+			radio_send((uint8_t *)(&pdu_data_tx[0]),
 							RADIO_FLAGS_RX_NEXT);
 
 			ll_conn_contexts[0].conn_event_cnt++;
