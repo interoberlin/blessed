@@ -1125,8 +1125,7 @@ int16_t ll_initiate_connection(uint32_t interval, uint32_t window,
 
 	radio_set_callbacks(ll_on_radio_rx, NULL);
 
-
-	/* TODO : TX and RX buffers ! */
+	/* TODO : RX buffer and callback function */
 
 	/* Initiating state :
 	 * see Link Layer specification Section 4.4.4, Core v4.1 p.2537 */
@@ -1160,6 +1159,27 @@ int16_t ll_initiate_cancel(void)
 	current_state = LL_STATE_STANDBY;
 
 	DBG("");
+
+	return 0;
+}
+
+/**@brief Set new data to send to the peer when in connection state
+ *
+ * @param[in] data: Pointer to a buffer containing the data to send
+ * @param[in] len: The number of bytes to send. Must be <= 27
+ * See Link Layer specification, Section 2.4, Core v4.1 p.2511
+ */
+int16_t ll_cnx_send_data(uint8_t *data, uint8_t len)
+{
+	if(len > LL_DATA_MTU_PAYLOAD)
+	{
+		ERROR("Max payload length : %u bytes in connection state",
+							LL_DATA_MTU_PAYLOAD);
+		return -EINVAL;
+	}
+
+	ll_conn_contexts[0].tx_buffer = data;
+	ll_conn_contexts[0].tx_length = len;
 
 	return 0;
 }
