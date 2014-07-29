@@ -36,6 +36,13 @@
 #include "radio.h"
 #include "nrf51822.h"
 
+#define DEBUG_TIMINGS
+
+#ifdef DEBUG_TIMINGS
+#include "nrf_gpio.h"
+#include "nrf_gpiote.h"
+#endif
+
 #define MAX_BUF_LEN			RADIO_MAX_PDU
 #define MAX_PAYLOAD_LEN			(RADIO_MAX_PDU - 2)
 
@@ -43,6 +50,10 @@
 #define STATUS_RX			2
 #define STATUS_TX			4
 #define STATUS_BUSY			(STATUS_RX | STATUS_TX)
+
+#ifdef DEBUG_TIMINGS
+#define RADIO_STATUS_PIN		1	/* HIGH when RX/TX */
+#endif
 
 #define BASE_SHORTS							\
 	(RADIO_SHORTS_READY_START_Enabled				\
@@ -344,6 +355,23 @@ int16_t radio_init(void)
 
 	NRF_RADIO->PACKETPTR = (uint32_t) inbuf;
 	memset(inbuf, 0, sizeof(inbuf));
+
+#ifdef DEBUG_TIMINGS
+	/* Setup GPIOTE module to trigger GPIO pins when the radio is in RX or
+	 * TX state */
+	nrf_gpio_cfg_output(RADIO_STATUS_PIN);
+	nrf_gpiote_task_config(0, RADIO_STATUS_PIN,
+		NRF_GPIOTE_POLARITY_TOGGLE, NRF_GPIOTE_INITIAL_VALUE_LOW);
+
+
+	/* Setup PPI module to call GPIOTE on radio events */
+	NRF_PPI->CH[0].EEP = (uint32_t)&NRF_RADIO->EVENTS_READY;
+	NRF_PPI->CH[0].TEP = (uint32_t)&NRF_GPIOTE->TASKS_OUT[0];
+	NRF_PPI->CH[1].EEP = (uint32_t)&NRF_RADIO->EVENTS_END;
+	NRF_PPI->CH[1].TEP = (uint32_t)&NRF_GPIOTE->TASKS_OUT[0];
+	NRF_PPI->CHEN |= (PPI_CHEN_CH0_Enabled << PPI_CHEN_CH0_Pos);
+	NRF_PPI->CHEN |= (PPI_CHEN_CH1_Enabled << PPI_CHEN_CH1_Pos);
+#endif
 
 	status = STATUS_INITIALIZED;
 
