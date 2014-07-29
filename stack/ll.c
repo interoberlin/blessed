@@ -1136,3 +1136,23 @@ int16_t ll_initiate_connection(uint32_t interval, uint32_t window,
 
 	return 0;
 }
+
+/**@brief Stop the initiating procedure
+ */
+int16_t ll_initiate_cancel(void)
+{
+	if (current_state != LL_STATE_INITIATING)
+		return -ENOREADY;
+
+	timer_stop(t_ll_interval);
+	timer_stop(t_ll_single_shot);
+	timer_stop(t_ll_ifs);
+
+	radio_stop();
+
+	current_state = LL_STATE_STANDBY;
+
+	DBG("");
+
+	return 0;
+}
