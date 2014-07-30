@@ -67,6 +67,14 @@
 #define LL_SCAN_PASSIVE			0x00
 #define LL_SCAN_ACTIVE			0x01
 
+/* Values used for LL Version exchange.
+ * https://www.bluetooth.org/en-us/specification/assigned-numbers/link-layer
+ * https://www.bluetooth.org/en-us/specification/assigned-numbers/company-identifiers
+ */
+#define LL_VERS_NR			0x07 	/* Core v4.1 */
+#define LL_COMP_ID			0xFFFF 	/* Unassigned Company ID */
+#define LL_SUB_VERS_NR			0x0000	/* Implementation rev. nr */
+
 /* Link Layer specification Section 2.3, Core 4.1 page 2505 */
 typedef enum ll_pdu {
 	LL_PDU_ADV_IND,
@@ -77,6 +85,30 @@ typedef enum ll_pdu {
 	LL_PDU_CONNECT_REQ,
 	LL_PDU_ADV_SCAN_IND
 } ll_pdu_t;
+
+/* Link Layer specification, Section 2.4.2, Core 4.1 p. 2512-2521 */
+typedef enum ll_ctrl_pdu {
+	LL_CONNECTION_UPDATE_REQ,
+	LL_CHANNEL_MAP_REQ,
+	LL_TERMINATE_IND,
+	LL_ENC_REQ,
+	LL_ENC_RSP,
+	LL_START_ENC_REQ,
+	LL_START_ENC_RSP,
+	LL_UNKNOWN_RSP,
+	LL_FEATURE_REQ,
+	LL_FEATURE_RSP,
+	LL_PAUSE_ENC_REQ,
+	LL_PAUSE_ENC_RSP,
+	LL_VERSION_IND,
+	LL_REJECT_IND,
+	LL_SLAVE_FEATURE_REQ,
+	LL_CONNECTION_PARAM_REQ,
+	LL_CONNECTION_PARAM_RSP,
+	LL_REJECT_IND_EXT,
+	LL_PING_REQ,
+	LL_PING_RSP
+} ll_ctrl_pdu_t;
 
 /**@brief Connection parameters structure */
 /* TODO helper macros to convert to and from us */
