@@ -153,3 +153,4 @@ int16_t ll_initiate_connection(uint32_t interval, uint32_t window,
 	bdaddr_t* peer_addresses, uint16_t num_addresses);
 int16_t ll_initiate_cancel(void);
 int16_t ll_cnx_send_data(uint8_t *data, uint8_t len);
+int16_t ll_cnx_terminate(void);

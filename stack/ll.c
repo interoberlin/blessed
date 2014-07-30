@@ -126,6 +126,8 @@ struct __attribute__ ((packed)) ll_pdu_connect_payload {
 /* Connection flags, used to keep track of various events and procedures in
  * a connection */
 #define LL_CONN_FLAGS_ESTABLISHED	1	/* conn. created/established */
+#define LL_CONN_FLAGS_TERM_LOCAL	2	/* termination req by Host */
+#define LL_CONN_FLAGS_TERM_PEER		4	/* term. req by peer device */
 
 /** This structure contains all the fields needed to establish and maintain a
  * connection, on Master or Slave side. For a Master involved in multiple
@@ -319,7 +321,18 @@ static void prepare_next_data_pdu(uint8_t conn_index, bool control_pdu,
 	/* We assume that the master will send only 1 packet in every CE */
 	pdu_data_tx[conn_index].md = 0UL;
 
-	if(control_pdu)
+	if(ll_conn_contexts[conn_index].flags & LL_CONN_FLAGS_TERM_LOCAL)
+	{
+		/* If a termination has been requested locally, send only
+		 * LL_TERMINATE_IND PDUs until receiving an ack */
+		pdu_data_tx[conn_index].llid = LL_PDU_CONTROL;
+		pdu_data_tx[conn_index].length = 2;
+		pdu_data_tx[conn_index].payload[0] = LL_TERMINATE_IND;
+		/* REMOTE USER TERMINATED CONNECTION error code */
+		pdu_data_tx[conn_index].payload[1] = 0x13;
+
+	}
+	else if(control_pdu)
 	{
 		/* Reply immediately to LL Control PDUs
 		 * Link Layer spec, Section 2.4.2, Core 4.1 p. 2512-2521
@@ -339,6 +352,14 @@ static void prepare_next_data_pdu(uint8_t conn_index, bool control_pdu,
 					(uint8_t)(0xFF & LL_SUB_VERS_NR);
 			pdu_data_tx[conn_index].payload[5] =
 					(uint8_t)(0xFF & (LL_SUB_VERS_NR>>8));
+			break;
+		case LL_TERMINATE_IND:
+			/* Send Empty Data PDU then stop connection */
+			pdu_data_tx[conn_index].llid = LL_PDU_DATA_FRAG_EMPTY;
+			pdu_data_tx[conn_index].length = 0;
+
+			ll_conn_contexts[conn_index].flags |=
+							LL_CONN_FLAGS_TERM_PEER;
 			break;
 		default:
 			/* Reply with an LL_UNKNOWN_RSP PDU to all other,
@@ -534,6 +555,16 @@ static void ll_on_radio_rx(const uint8_t *pdu, bool crc, bool active)
 				 * TODO : notify the app ? */
 				ll_conn_contexts[0].sn++;
 
+				/* If a terminating procedure has been requested
+				 *  we can exit connection state now */
+				if(ll_conn_contexts[0].flags &
+						(LL_CONN_FLAGS_TERM_PEER |
+						LL_CONN_FLAGS_TERM_LOCAL)) {
+					current_state = LL_STATE_STANDBY;
+					ll_num_connections--;
+					break;
+				}
+
 				/* Prepare a new packet according to what was
 				 * just received */
 				if(rcvd_data_pdu->llid == LL_PDU_CONTROL)
@@ -541,6 +572,7 @@ static void ll_on_radio_rx(const uint8_t *pdu, bool crc, bool active)
 						rcvd_data_pdu->payload[0]);
 				else
 					prepare_next_data_pdu(0, false, 0x00);
+
 			}
 
 			break;
@@ -1199,6 +1231,21 @@ int16_t ll_cnx_send_data(uint8_t *data, uint8_t len)
 
 	ll_conn_contexts[0].tx_buffer = data;
 	ll_conn_contexts[0].tx_length = len;
+
+	return 0;
+}
+
+/**@brief Terminate the current connection
+ *
+ */
+int16_t ll_cnx_terminate(void)
+{
+	/* TODO check that we are in connection state */
+
+	ll_conn_contexts[0].flags |= LL_CONN_FLAGS_TERM_LOCAL;
+	/* Force the preparation of the next data PDU, discarding current
+	 * operations */
+	prepare_next_data_pdu(0, false, 0);
 
 	return 0;
 }
