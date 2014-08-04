@@ -133,6 +133,9 @@ typedef void (*adv_report_cb_t)(ll_pdu_t type, uint8_t addr_type,
 					const uint8_t *addr, uint8_t len,
 					const uint8_t *data);
 
+/* Callback function for connection events */
+typedef void (*conn_evt_cb_t)(ble_evt_t type, const uint8_t *data);
+
 int16_t ll_init(const bdaddr_t *addr);
 
 /* Advertising */
@@ -150,7 +153,8 @@ int16_t ll_scan_stop(void);
 int16_t ll_set_connection_params(ll_conn_params_t* conn_params);
 int16_t ll_set_data_ch_map(uint64_t ch_map);
 int16_t ll_initiate_connection(uint32_t interval, uint32_t window,
-	bdaddr_t* peer_addresses, uint16_t num_addresses);
+	bdaddr_t* peer_addresses, uint16_t num_addresses, uint8_t* rx_buf,
+						conn_evt_cb_t conn_evt_cb);
 int16_t ll_initiate_cancel(void);
 int16_t ll_cnx_send_data(uint8_t *data, uint8_t len);
 int16_t ll_cnx_terminate(void);

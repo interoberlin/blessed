@@ -34,6 +34,7 @@
 #include <blessed/timer.h>
 #include <blessed/bdaddr.h>
 #include <blessed/random.h>
+#include <blessed/events.h>
 
 #include "radio.h"
 #include "ll.h"
@@ -217,6 +218,10 @@ static void t_ll_interval_cb(void);
 /** Callback function to report advertisers (SCANNING state) */
 static adv_report_cb_t ll_adv_report_cb = NULL;
 
+/** Callback function to report connection events (CONNECTION state) */
+static conn_evt_cb_t ll_conn_evt_cb = NULL;
+static uint8_t ll_conn_evt_params[BLE_EVT_PARAMS_MAX_SIZE];
+
 /* Forward-declarations */
 static void ll_on_radio_tx(bool active);
 
@@ -381,6 +386,12 @@ static void prepare_next_data_pdu(uint8_t conn_index, bool control_pdu,
 
 		/* Data in the TX buffer is now outdated */
 		ll_conn_contexts[conn_index].tx_length = 0;
+
+		/* Notify upper layers that data has been sent */
+		ble_evt_ll_packets_sent_t *packets_tx_params =
+				(ble_evt_ll_packets_sent_t*)ll_conn_evt_params;
+		packets_tx_params->index = conn_index;
+		ll_conn_evt_cb(BLE_EVT_LL_PACKETS_SENT, ll_conn_evt_params);
 	}
 	else
 	{
@@ -390,6 +401,27 @@ static void prepare_next_data_pdu(uint8_t conn_index, bool control_pdu,
 	}
 }
 
+/**@brief Handle the end of a connection, which can be caused by various reasons
+ *
+ * @param[in] conn_index: the index in case of multiple connections
+ * @param[in] reason: an error code indicating why the connection is being
+ * 	closed.
+ */
+static void end_connection(uint8_t conn_index, uint8_t reason)
+{
+	//TODO handle connection index.
+
+	current_state = LL_STATE_STANDBY;
+	ll_num_connections--;
+
+	/* Notify upper layers */
+	ble_evt_ll_disconnect_complete_t *disconn_params =
+			(ble_evt_ll_disconnect_complete_t*)ll_conn_evt_params;
+	disconn_params->index = conn_index;
+	disconn_params->reason = reason;
+	ll_conn_evt_cb(BLE_EVT_LL_DISCONNECT_COMPLETE, ll_conn_evt_params);
+}
+
 /**@brief Function called by the radio driver (PHY layer) on packet RX
  * Dispatch the event according to the LL state
  */
@@ -397,6 +429,10 @@ static void ll_on_radio_rx(const uint8_t *pdu, bool crc, bool active)
 {
 	struct ll_pdu_adv *rcvd_adv_pdu;
 	struct ll_pdu_data *rcvd_data_pdu;
+	ble_evt_ll_connection_complete_t *conn_complete_params =
+			(ble_evt_ll_connection_complete_t*)ll_conn_evt_params;
+	ble_evt_ll_packets_received_t *packets_rx_params =
+			(ble_evt_ll_packets_received_t*)ll_conn_evt_params;
 
 	switch(current_state) {
 		case LL_STATE_SCANNING:
@@ -464,9 +500,6 @@ static void ll_on_radio_rx(const uint8_t *pdu, bool crc, bool active)
 				memcpy(pdu_connect_req.payload+BDADDR_LEN,
 					rcvd_adv_pdu->payload, BDADDR_LEN);
 
-				DBG("Sent CONNECT_REQ, transitioning to conn.\
-								state");
-
 				current_state = LL_STATE_CONNECTION_MASTER;
 
 				timer_start(t_ll_interval,
@@ -479,7 +512,15 @@ static void ll_on_radio_rx(const uint8_t *pdu, bool crc, bool active)
 				/* Prepare the Data PDU that will be sent */
 				prepare_next_data_pdu(0, false, 0x00);
 
-				/* TODO notify application (cb function) */
+				/* Send an event to the upper layers */
+				conn_complete_params->index = 0;
+				conn_complete_params->peer_addr.type =
+							rcvd_adv_pdu->tx_add;
+				memcpy(conn_complete_params->peer_addr.addr,
+					rcvd_adv_pdu->payload, BDADDR_LEN);
+
+				ll_conn_evt_cb(BLE_EVT_LL_CONNECTION_COMPLETE,
+							ll_conn_evt_params);
 			}
 			else
 			{
@@ -510,8 +551,7 @@ static void ll_on_radio_rx(const uint8_t *pdu, bool crc, bool active)
 			if(!crc)
 			{
 				/* ignore incoming data
-				 * equivalent to a NACK => resend the old data
-				 * TODO : notify the app ? */
+				 * equivalent to a NACK => resend the old data */
 				DBG("Packet with bad CRC received");
 				return;
 			}
@@ -534,8 +574,15 @@ static void ll_on_radio_rx(const uint8_t *pdu, bool crc, bool active)
 					memcpy(ll_conn_contexts[0].rx_buffer,
 							rcvd_data_pdu->payload,
 							rcvd_data_pdu->length);
+					/* Send an event to upper layers to
+					 * notify that new data is available */
+					packets_rx_params->index = 0;
+					packets_rx_params->length =
+					ll_conn_contexts[0].rx_length;
+					ll_conn_evt_cb(BLE_EVT_LL_PACKETS_RECEIVED,
+							ll_conn_evt_params);
+
 				}
-				/* TODO notify app that new data is available */
 			}
 			else
 			{
@@ -545,23 +592,25 @@ static void ll_on_radio_rx(const uint8_t *pdu, bool crc, bool active)
 			if(rcvd_data_pdu->nesn ==
 						(ll_conn_contexts[0].sn & 0x01))
 			{
-				/* NACK => resend old data (do nothing)
-				 * TODO : notify the app ? */
+				/* NACK => resend old data (do nothing) */
 				DBG("NACK received");
 			}
 			else
 			{
-				/* ACK => send new data
-				 * TODO : notify the app ? */
+				/* ACK => send new data */
 				ll_conn_contexts[0].sn++;
 
 				/* If a terminating procedure has been requested
 				 *  we can exit connection state now */
 				if(ll_conn_contexts[0].flags &
-						(LL_CONN_FLAGS_TERM_PEER |
-						LL_CONN_FLAGS_TERM_LOCAL)) {
-					current_state = LL_STATE_STANDBY;
-					ll_num_connections--;
+						LL_CONN_FLAGS_TERM_PEER ) {
+					end_connection(0,
+						BLE_HCI_REMOTE_USER_TERMINATED_CONNECTION);
+					break;
+				} else if(ll_conn_contexts[0].flags &
+						LL_CONN_FLAGS_TERM_LOCAL ) {
+					end_connection(0,
+						BLE_HCI_LOCAL_HOST_TERMINATED_CONNECTION);
 					break;
 				}
 
@@ -720,13 +769,7 @@ static void t_ll_interval_cb(void)
 					(ll_conn_params.supervision_timeout /
 					ll_conn_params.conn_interval_min)))
 			{
-				timer_stop(t_ll_interval);
-				current_state = LL_STATE_STANDBY;
-				ll_num_connections--;
-				/* TODO notify the app. */
-				DBG("Connection lost (supervision timeout), \
-						timer value : %u",
-						ll_conn_contexts[0].superv_tmr);
+				end_connection(0, BLE_HCI_CONNECTION_TIMEOUT);
 				return;
 			}
 
@@ -1145,9 +1188,13 @@ int16_t ll_set_data_ch_map(uint64_t ch_map)
  * @param [in] peer_addresses: a pointer to an array of Bluetooth addresses
  * 	to try to connect
  * @param [in] num_addresses: the size of the peer_addresses array
+ * @param [out] rx_buf: a pointer to an array to store incoming data from the
+ * 	peer device
+ * @param [out] conn_evt_cb: the function to call on connection events
  */
 int16_t ll_initiate_connection(uint32_t interval, uint32_t window,
-	bdaddr_t* peer_addresses, uint16_t num_addresses)
+	bdaddr_t* peer_addresses, uint16_t num_addresses, uint8_t* rx_buf,
+						conn_evt_cb_t conn_evt_cb)
 {
 	if(window > interval)
 	{
@@ -1169,14 +1216,16 @@ int16_t ll_initiate_connection(uint32_t interval, uint32_t window,
 
 	ll_peer_addresses = peer_addresses;
 	ll_num_peer_addresses = num_addresses;
+	ll_conn_evt_cb = conn_evt_cb;
 
 	/* Generate new connection parameters and init CONNECT_REQ PDU */
-	init_connection_context(ll_num_connections);
+	uint8_t conn_index = ll_num_connections;
+	init_connection_context(conn_index);
+	ll_conn_contexts[conn_index].rx_buffer = rx_buf;
+
 	ll_num_connections++;
 
 	radio_set_callbacks(ll_on_radio_rx, NULL);
-
-	/* TODO : RX buffer and callback function */
 
 	/* Initiating state :
 	 * see Link Layer specification Section 4.4.4, Core v4.1 p.2537 */
