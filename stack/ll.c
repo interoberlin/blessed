@@ -82,6 +82,23 @@ struct __attribute__ ((packed)) ll_pdu_scan_req {
 	uint8_t adva[6];
 };
 
+/* Link Layer specification Section 2.3.3.1, Core 4.1 page 2509
+ * CONNECT_REQ PDU payload */
+struct __attribute__ ((packed)) ll_pdu_connect_payload {
+	uint8_t		init_add[BDADDR_LEN];	/* Initiator address */
+	uint8_t		adv_add[BDADDR_LEN];	/* Advertiser address */
+	uint32_t	aa;			/* connection Access Address */
+	uint8_t		crc_init[3];		/* connection CRC init */
+	uint8_t		win_size;		/* tx window size (*1.25ms) */
+	uint16_t	win_offset;		/* tx window offset (*1.25ms) */
+	uint16_t	interval;		/* conn. interval (*1.25ms) */
+	uint16_t	latency;		/* conn. slave latency */
+	uint16_t	timeout;		/* conn. supervision (*10ms) */
+	uint8_t		ch_map[5];		/* channel map */
+	uint8_t		hop:5;			/* hop increment */
+	uint8_t		sca:3;			/* Master sleep clock accuracy */
+};
+
 /* Connection flags, used to keep track of various events and procedures in
  * a connection */
 #define LL_CONN_FLAGS_ESTABLISHED	1	/* conn. created/established */
