@@ -33,6 +33,7 @@
 #include <blessed/log.h>
 #include <blessed/timer.h>
 #include <blessed/bdaddr.h>
+#include <blessed/random.h>
 
 #include "radio.h"
 #include "ll.h"
@@ -153,9 +154,12 @@ static uint32_t t_scan_window;
 
 static struct ll_pdu_adv pdu_adv;
 static struct ll_pdu_adv pdu_scan_rsp;
+static struct ll_pdu_adv pdu_connect_req;
 
 static bool rx = false;
 static ll_conn_params_t ll_conn_params;
+static struct ll_conn_context ll_conn_contexts[LL_MAX_SIMULTANEOUS_CONNECTIONS];
+static uint8_t ll_num_connections = 0;
 /*Internal pointer to an array of accepted peer addresses */
 static bdaddr_t *ll_peer_addresses;
 static uint16_t ll_num_peer_addresses; /*Size of the accepter peers array */
@@ -247,6 +251,21 @@ static __inline bool is_addr_mine(uint8_t addr_type, uint8_t *addr)
 				addr[1], addr[2], addr[3], addr[4], addr[5]);
 */
 	return result;
+}
+
+/**@brief Generate an appropriate, random Access Address following rules in
+ * Link Layer specification Section 2.1.2, Core 4.1 pages 2503-2504
+ */
+static uint32_t generate_access_address(void)
+{
+	uint32_t aa = 0;
+	do {
+		for(int i = 0; i < 4; i++)
+			aa |= (random_generate() << (8*i));
+	} while(aa == LL_ACCESS_ADDRESS_ADV);
+	/* TODO: check for the various other requirements in the spec */
+
+	return aa;
 }
 
 /**@brief Function called by the radio driver (PHY layer) on packet RX
@@ -581,6 +600,71 @@ static void init_default_conn_params(void)
 	ll_set_data_ch_map(0x1FFFFFFFFF); /* Use all channels */
 }
 
+/**@brief Initialize the connection context structure at the beginning of a new
+ * connection, and prepare the CONNECT_REQ PDU to send
+ *
+ * See Link Layer specification Section 4.5, Core 4.1 pages 2537-2547
+ *
+ * @param[in] conn_index: the connection index in case of multiple connections
+ */
+static void init_connection_context(uint8_t conn_index)
+{
+	struct ll_conn_context *context = &ll_conn_contexts[conn_index];
+	context->access_address = generate_access_address();
+	context->crcinit = 0;
+	for(int i = 0; i < 3; i++)
+		context->crcinit |= (random_generate() << (8*i));
+	/* "Random" value between 5 and 16 */
+	context->hop = (random_generate() * 11 / 255) + 5;
+	context->last_unmap_ch = 0;
+	/* The CE counter is incremented at each CE and must be 0 on the first
+	 * CE */
+	context->conn_event_cnt = 0xFFFF;
+	context->superv_tmr = 0;
+	context->sn = 0;
+	context->nesn = 0;
+	context->flags = 0;
+
+	context->tx_buffer = NULL;
+	context->tx_length = 0;
+	context->rx_buffer = NULL;
+	context->rx_length = 0;
+
+	/* PDU initialization */
+	struct ll_pdu_connect_payload *payload;
+
+	pdu_connect_req.type = LL_PDU_CONNECT_REQ;
+	pdu_connect_req.tx_add = laddr->type;
+	pdu_connect_req.length = sizeof(*payload);
+
+	payload = (struct ll_pdu_connect_payload*)(pdu_connect_req.payload);
+	memcpy(payload->init_add, laddr->addr, BDADDR_LEN);
+
+	payload->aa = context->access_address;
+	for(int i = 0; i < 3; i++)
+		payload->crc_init[i] = (uint8_t)(context->crcinit >> 8*i);
+
+	/* Max. allowed value : min(10ms, connInterval-1.25ms) */
+	if(ll_conn_params.conn_interval_min > 8)
+		payload->win_size = 8;
+	else
+		payload->win_size = ll_conn_params.conn_interval_min-1;
+	/* FIXME: how to get the remaining time before the interval timer
+	 * fires again ? We have to set the tx window offset according to this
+	 */
+	payload->win_offset = 0;
+
+	payload->interval = ll_conn_params.conn_interval_min;
+	payload->latency = ll_conn_params.conn_latency;
+	payload->timeout = ll_conn_params.supervision_timeout;
+	for(int i = 0; i < 5; i++)
+		payload->ch_map[i] = (uint8_t)(data_ch_map >> 8*i);
+
+	payload->hop = context->hop;
+	payload->sca = 0; /* Worst accuracy : 251->500ppm */
+
+}
+
 int16_t ll_init(const bdaddr_t *addr)
 {
 	int16_t err_code;
@@ -597,6 +681,10 @@ int16_t ll_init(const bdaddr_t *addr)
 		return err_code;
 
 	err_code = radio_init();
+	if (err_code < 0)
+		return err_code;
+
+	err_code = random_init();
 	if (err_code < 0)
 		return err_code;
 
@@ -779,13 +867,27 @@ int16_t ll_initiate_connection(uint32_t interval, uint32_t window,
 		return -EINVAL;
 	}
 
+	if(ll_num_connections >= LL_MAX_SIMULTANEOUS_CONNECTIONS)
+	{
+		ERROR("only %u simultaneous connections allowed",
+					LL_MAX_SIMULTANEOUS_CONNECTIONS);
+		return -ENOMEM;
+	}
+
 	ll_peer_addresses = peer_addresses;
 	ll_num_peer_addresses = num_addresses;
+
+	/* Generate new connection parameters and init CONNECT_REQ PDU */
+	init_connection_context(ll_num_connections);
+	ll_num_connections++;
+
+	/* TODO : TX and RX buffers ! */
 
 	/* Initiating state :
 	 * see Link Layer specification Section 4.4.4, Core v4.1 p.2537 */
 	t_scan_window = window;
-	int16_t err_code = timer_start(t_ll_interval, interval);
+	int16_t err_code = timer_start(t_ll_interval, interval,
+							t_ll_interval_cb);
 	if (err_code < 0)
 		return err_code;
 
