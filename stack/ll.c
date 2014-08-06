@@ -59,7 +59,8 @@ typedef enum ll_states {
 	LL_STATE_ADVERTISING,
 	LL_STATE_SCANNING,
 	LL_STATE_INITIATING,
-	LL_STATE_CONNECTION,
+	LL_STATE_CONNECTION_MASTER,
+	LL_STATE_CONNECTION_SLAVE,
 } ll_states_t;
 
 /* Link Layer specification Section 2.3, Core 4.1 pages 2504-2505 */
@@ -291,7 +292,8 @@ static void ll_on_radio_rx(const uint8_t *pdu, bool crc, bool active)
 			}
 			break;
 
-		case LL_STATE_CONNECTION:
+		case LL_STATE_CONNECTION_MASTER:
+		case LL_STATE_CONNECTION_SLAVE:
 			/* Not implemented */
 		case LL_STATE_STANDBY:
 		default:
@@ -379,7 +381,8 @@ static void t_ll_single_shot_cb(void)
 			radio_stop();
 			break;
 
-		case LL_STATE_CONNECTION:
+		case LL_STATE_CONNECTION_MASTER:
+		case LL_STATE_CONNECTION_SLAVE:
 			/* Not implemented */
 		case LL_STATE_STANDBY:
 		default:
@@ -409,7 +412,8 @@ static void t_ll_interval_cb(void)
 			timer_start(t_ll_single_shot, t_scan_window);
 			break;
 
-		case LL_STATE_CONNECTION:
+		case LL_STATE_CONNECTION_MASTER:
+		case LL_STATE_CONNECTION_SLAVE:
 			/* Not implemented */
 		case LL_STATE_STANDBY:
 		default:
