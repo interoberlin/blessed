@@ -1262,7 +1262,7 @@ int16_t ll_initiate_cancel(void)
  * @param[in] len: The number of bytes to send. Must be <= 27
  * See Link Layer specification, Section 2.4, Core v4.1 p.2511
  */
-int16_t ll_cnx_send_data(uint8_t *data, uint8_t len)
+int16_t ll_cnx_send_data(uint8_t index, uint8_t *data, uint8_t len)
 {
 	if(len > LL_DATA_MTU_PAYLOAD)
 	{
@@ -1271,8 +1271,8 @@ int16_t ll_cnx_send_data(uint8_t *data, uint8_t len)
 		return -EINVAL;
 	}
 
-	ll_conn_contexts[0].tx_buffer = data;
-	ll_conn_contexts[0].tx_length = len;
+	ll_conn_contexts[index].tx_buffer = data;
+	ll_conn_contexts[index].tx_length = len;
 
 	return 0;
 }
@@ -1280,14 +1280,14 @@ int16_t ll_cnx_send_data(uint8_t *data, uint8_t len)
 /**@brief Terminate the current connection
  *
  */
-int16_t ll_cnx_terminate(void)
+int16_t ll_cnx_terminate(uint8_t index)
 {
 	/* TODO check that we are in connection state */
 
-	ll_conn_contexts[0].flags |= LL_CONN_FLAGS_TERM_LOCAL;
+	ll_conn_contexts[index].flags |= LL_CONN_FLAGS_TERM_LOCAL;
 	/* Force the preparation of the next data PDU, discarding current
 	 * operations */
-	prepare_next_data_pdu(0, false, 0);
+	prepare_next_data_pdu(index, false, 0);
 
 	return 0;
 }
