@@ -168,6 +168,9 @@ int16_t timer_start(int16_t id, uint32_t us)
 	ticks = ROUNDED_DIV((uint64_t)us * HFCLK, TIMER_SECONDS(1)
 					* ROUNDED_DIV(2 << TIMER_PRESCALER, 2));
 
+	if(ticks >= 0xFFFFFF)
+		return -EINVAL;
+
 	timers[id].active = 1;
 	timers[id].ticks = ticks;
 
