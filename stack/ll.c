@@ -1295,6 +1295,12 @@ int16_t ll_initiate_cancel(void)
  */
 int16_t ll_cnx_send_data(uint8_t index, uint8_t *data, uint8_t len)
 {
+	if(! (active_conn & (1UL<<index)) )
+	{
+		ERROR("Inactive connection : %u", index);
+		return -EINVAL;
+	}
+
 	if(len > LL_DATA_MTU_PAYLOAD)
 	{
 		ERROR("Max payload length : %u bytes in connection state",
@@ -1314,6 +1320,11 @@ int16_t ll_cnx_send_data(uint8_t index, uint8_t *data, uint8_t len)
 int16_t ll_cnx_terminate(uint8_t index)
 {
 	/* TODO check that we are in connection state */
+	if(! (active_conn & (1UL<<index)) )
+	{
+		ERROR("Inactive connection : %u", index);
+		return -EINVAL;
+	}
 
 	ll_conn_contexts[index].flags |= LL_CONN_FLAGS_TERM_LOCAL;
 	/* Force the preparation of the next data PDU, discarding current
