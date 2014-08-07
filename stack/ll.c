@@ -195,6 +195,8 @@ static struct ll_conn_context ll_conn_contexts[LL_MAX_SIMULTANEOUS_CONNECTIONS];
 static uint8_t ll_num_connections = 0;
 /* Initiating state reserved connection index */
 static uint8_t ll_init_conn_index;
+/* Current connection being processed */
+static uint8_t ll_current_conn;
 
 /*Internal pointer to an array of accepted peer addresses */
 static bdaddr_t *ll_peer_addresses;
@@ -582,8 +584,9 @@ static void ll_on_radio_rx(const uint8_t *pdu, bool crc, bool active)
 
 			timer_stop(t_ll_ifs);
 
-			ll_conn_contexts[0].superv_tmr = 0;
-			ll_conn_contexts[0].flags |= LL_CONN_FLAGS_ESTABLISHED;
+			ll_conn_contexts[ll_current_conn].superv_tmr = 0;
+			ll_conn_contexts[ll_current_conn].flags |=
+						LL_CONN_FLAGS_ESTABLISHED;
 
 			/* Hypothesis for simplification : the connection event
 			 * is closed when the slave has sent a packet,
@@ -603,28 +606,28 @@ static void ll_on_radio_rx(const uint8_t *pdu, bool crc, bool active)
 			}
 
 			if(rcvd_data_pdu->sn ==
-					(ll_conn_contexts[0].nesn & 0x01))
+				(ll_conn_contexts[ll_current_conn].nesn & 0x01))
 			{
 				/* New incoming Data Channel PDU
 				* local NESN *may* be incremented to allow flow
 				* control */
-				ll_conn_contexts[0].nesn++;
+				ll_conn_contexts[ll_current_conn].nesn++;
 
 				/* Get data if the received packet wasn't a
 				 * LL Control PDU or an Empty PDU*/
 				if(rcvd_data_pdu->llid != LL_PDU_CONTROL &&
 						rcvd_data_pdu->length > 0)
 				{
-					ll_conn_contexts[0].rx_length =
+					ll_conn_contexts[ll_current_conn].rx_length =
 							rcvd_data_pdu->length;
-					memcpy(ll_conn_contexts[0].rx_buffer,
+					memcpy(ll_conn_contexts[ll_current_conn].rx_buffer,
 							rcvd_data_pdu->payload,
 							rcvd_data_pdu->length);
 					/* Send an event to upper layers to
 					 * notify that new data is available */
 					packets_rx_params->index = 0;
 					packets_rx_params->length =
-					ll_conn_contexts[0].rx_length;
+						ll_conn_contexts[ll_current_conn].rx_length;
 					ll_conn_evt_cb(BLE_EVT_LL_PACKETS_RECEIVED,
 							ll_conn_evt_params);
 
@@ -636,7 +639,7 @@ static void ll_on_radio_rx(const uint8_t *pdu, bool crc, bool active)
 			}
 
 			if(rcvd_data_pdu->nesn ==
-						(ll_conn_contexts[0].sn & 0x01))
+				(ll_conn_contexts[ll_current_conn].sn & 0x01))
 			{
 				/* NACK => resend old data (do nothing) */
 				DBG("NACK received");
@@ -644,18 +647,18 @@ static void ll_on_radio_rx(const uint8_t *pdu, bool crc, bool active)
 			else
 			{
 				/* ACK => send new data */
-				ll_conn_contexts[0].sn++;
+				ll_conn_contexts[ll_current_conn].sn++;
 
 				/* If a terminating procedure has been requested
 				 *  we can exit connection state now */
-				if(ll_conn_contexts[0].flags &
+				if(ll_conn_contexts[ll_current_conn].flags &
 						LL_CONN_FLAGS_TERM_PEER ) {
-					end_connection(0,
+					end_connection(ll_current_conn,
 						BLE_HCI_REMOTE_USER_TERMINATED_CONNECTION);
 					break;
-				} else if(ll_conn_contexts[0].flags &
-						LL_CONN_FLAGS_TERM_LOCAL ) {
-					end_connection(0,
+				} else if(ll_conn_contexts[ll_current_conn].flags
+						& LL_CONN_FLAGS_TERM_LOCAL ) {
+					end_connection(ll_current_conn,
 						BLE_HCI_LOCAL_HOST_TERMINATED_CONNECTION);
 					break;
 				}
@@ -663,10 +666,11 @@ static void ll_on_radio_rx(const uint8_t *pdu, bool crc, bool active)
 				/* Prepare a new packet according to what was
 				 * just received */
 				if(rcvd_data_pdu->llid == LL_PDU_CONTROL)
-					prepare_next_data_pdu(0, true,
-						rcvd_data_pdu->payload[0]);
+					prepare_next_data_pdu(ll_current_conn,
+						true, rcvd_data_pdu->payload[0]);
 				else
-					prepare_next_data_pdu(0, false, 0x00);
+					prepare_next_data_pdu(ll_current_conn,
+								false, 0x00);
 
 			}
 
@@ -808,34 +812,40 @@ static void t_ll_interval_cb(void)
 			 * LL spec, Section 2.4, Core 4.1 page 2511
 			 */
 
+			ll_current_conn = 0;
+
 			/* Handle supervision timer which is reset every time a
 			 * new packet is received
 			 * NOTE: this doesn't respect the spec as the timer's
 			 * unit is connInterval
 			 */
-			if((!(ll_conn_contexts[0].flags & LL_CONN_FLAGS_ESTABLISHED) &&
-					ll_conn_contexts[0].superv_tmr >= 6) ||
-			((ll_conn_contexts[0].flags & LL_CONN_FLAGS_ESTABLISHED) &&
-					ll_conn_contexts[0].superv_tmr >=
+			if((!(ll_conn_contexts[ll_current_conn].flags &
+						LL_CONN_FLAGS_ESTABLISHED) &&
+				ll_conn_contexts[ll_current_conn].superv_tmr
+								>= 6) ||
+				((ll_conn_contexts[ll_current_conn].flags &
+						LL_CONN_FLAGS_ESTABLISHED) &&
+				ll_conn_contexts[ll_current_conn].superv_tmr >=
 					(ll_conn_params.supervision_timeout /
 					ll_conn_params.conn_interval_min)))
 			{
-				end_connection(0, BLE_HCI_CONNECTION_TIMEOUT);
+				end_connection(ll_current_conn,
+						BLE_HCI_CONNECTION_TIMEOUT);
 				return;
 			}
 
 			radio_stop();
 			radio_prepare(data_ch_idx_selection(
-					&(ll_conn_contexts[0].last_unmap_ch),
-					ll_conn_contexts[0].hop),
-					ll_conn_contexts[0].access_address,
-					ll_conn_contexts[0].crcinit);
+				&(ll_conn_contexts[ll_current_conn].last_unmap_ch),
+				ll_conn_contexts[ll_current_conn].hop),
+				ll_conn_contexts[ll_current_conn].access_address,
+				ll_conn_contexts[ll_current_conn].crcinit);
 
-			radio_send((uint8_t *)(&pdu_data_tx[0]),
+			radio_send((uint8_t *)(&pdu_data_tx[ll_current_conn]),
 							RADIO_FLAGS_RX_NEXT);
 
-			ll_conn_contexts[0].conn_event_cnt++;
-			ll_conn_contexts[0].superv_tmr++;
+			ll_conn_contexts[ll_current_conn].conn_event_cnt++;
+			ll_conn_contexts[ll_current_conn].superv_tmr++;
 
 			/* Next step : ll_on_radio_rx (receive a packet from
 			 * the slave) or t_ll_ifs_cb (RX timeout) */
