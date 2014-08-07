@@ -38,7 +38,7 @@
 
 #define HFCLK				16000000UL
 #define TIMER_PRESCALER			4		/* 1 MHz */
-#define MAX_TIMERS			4
+#define MAX_TIMERS			3
 
 #define ROUNDED_DIV(A, B)		(((A) + ((B) / 2)) / (B))
 #define BIT(n)				(1 << n)
@@ -208,4 +208,23 @@ int16_t timer_stop(int16_t id)
 	}
 
 	return 0;
+}
+
+uint32_t timer_get_remaining_us(int16_t id)
+{
+	uint32_t ticks = 0;
+
+	if (!timers[id].active)
+		return 0;
+
+	NRF_TIMER0->TASKS_CAPTURE[3] = 1UL;
+
+	if(NRF_TIMER0->CC[id] > NRF_TIMER0->CC[3])
+		ticks = NRF_TIMER0->CC[id]-NRF_TIMER0->CC[3];
+	else
+		ticks = (0xFFFFFF-NRF_TIMER0->CC[3]) + NRF_TIMER0->CC[id];
+
+	return ROUNDED_DIV((uint64_t)ticks * TIMER_SECONDS(1) *
+					ROUNDED_DIV(2 << TIMER_PRESCALER, 2),
+									HFCLK);
 }
