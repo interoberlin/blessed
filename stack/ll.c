@@ -53,7 +53,9 @@
  */
 #define T_IFS				500
 
-#define LL_MAX_SIMULTANEOUS_CONNECTIONS	1
+/* Note : should not be higher than 32 because an uint32_t variable is used to
+ * store a map of active connections */
+#define LL_MAX_SIMULTANEOUS_CONNECTIONS	2
 
 /* Link Layer specification Section 1.1, Core 4.1 page 2499 */
 typedef enum ll_states {
@@ -189,9 +191,16 @@ static bool rx = false;
 static ll_conn_params_t ll_conn_params;
 static struct ll_conn_context ll_conn_contexts[LL_MAX_SIMULTANEOUS_CONNECTIONS];
 static uint8_t ll_num_connections = 0;
+/* Initiating state reserved connection index */
+static uint8_t ll_init_conn_index;
+
 /*Internal pointer to an array of accepted peer addresses */
 static bdaddr_t *ll_peer_addresses;
 static uint16_t ll_num_peer_addresses; /*Size of the accepter peers array */
+
+/* Map of active connections when simultaneous connections are allowed.
+ * Each bit represents a connection index. */
+static uint32_t active_conn;
 
 /** Timers used by the LL
  * Three timers are shared for the various states : one for triggering
@@ -299,6 +308,18 @@ static uint32_t generate_access_address(void)
 	return aa;
 }
 
+/**@brief Choose the connection index to use for the next connection
+ */
+static __inline uint8_t get_next_connection_index(void)
+{
+	for(int i = 0; i < LL_MAX_SIMULTANEOUS_CONNECTIONS; i++)
+	{
+		if( !(active_conn & (1UL << i)) )
+			return i;
+	}
+
+	return 0xFF;
+}
 
 /**@brief Prepare the next Data Channel PDU to send in a connection.
  *
@@ -401,8 +422,7 @@ static void prepare_next_data_pdu(uint8_t conn_index, bool control_pdu,
  */
 static void end_connection(uint8_t conn_index, uint8_t reason)
 {
-	//TODO handle connection index.
-
+	active_conn &= ~(1UL<<conn_index);
 	current_state = LL_STATE_STANDBY;
 	ll_num_connections--;
 
@@ -493,6 +513,8 @@ static void ll_on_radio_rx(const uint8_t *pdu, bool crc, bool active)
 					rcvd_adv_pdu->payload, BDADDR_LEN);
 
 				current_state = LL_STATE_CONNECTION_MASTER;
+				active_conn |= (1UL<<ll_init_conn_index);
+				ll_num_connections++;
 
 				timer_start(t_ll_interval,
 					ll_conn_params.conn_interval_min*1250);
@@ -1212,12 +1234,14 @@ int16_t ll_initiate_connection(uint32_t interval, uint32_t window,
 	ll_num_peer_addresses = num_addresses;
 	ll_conn_evt_cb = conn_evt_cb;
 
+	/* Get the first available connection index and reserve it for the
+	 * upcoming connection */
+	uint8_t conn_index = get_next_connection_index();
+	ll_init_conn_index = conn_index;
+
 	/* Generate new connection parameters and init CONNECT_REQ PDU */
-	uint8_t conn_index = ll_num_connections;
 	init_connection_context(conn_index);
 	ll_conn_contexts[conn_index].rx_buffer = rx_buf;
-
-	ll_num_connections++;
 
 	radio_set_callbacks(ll_on_radio_rx, NULL);
 
