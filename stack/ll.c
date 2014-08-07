@@ -1127,6 +1127,11 @@ int16_t ll_scan_start(uint8_t scan_type, uint32_t interval, uint32_t window,
 {
 	int16_t err_code;
 
+	if (! (current_state == LL_STATE_STANDBY ||
+				(current_state == LL_STATE_CONNECTION_MASTER &&
+					secondary_state == LL_STATE_STANDBY)) )
+		return -ENOREADY;
+
 	if(window > interval || interval > LL_SCAN_INTERVAL_MAX)
 		return -EINVAL;
 
@@ -1271,6 +1276,11 @@ int16_t ll_initiate_connection(uint32_t interval, uint32_t window,
 	bdaddr_t* peer_addresses, uint16_t num_addresses, uint8_t* rx_buf,
 						conn_evt_cb_t conn_evt_cb)
 {
+	if (! (current_state == LL_STATE_STANDBY ||
+				(current_state == LL_STATE_CONNECTION_MASTER &&
+					secondary_state == LL_STATE_STANDBY)) )
+		return -ENOREADY;
+
 	if(window > interval)
 	{
 		ERROR("interval must be greater than window");
@@ -1361,6 +1371,10 @@ int16_t ll_initiate_cancel(void)
  */
 int16_t ll_cnx_send_data(uint8_t index, uint8_t *data, uint8_t len)
 {
+	if (! (current_state == LL_STATE_CONNECTION_MASTER ||
+				secondary_state == LL_STATE_CONNECTION_MASTER) )
+		return -ENOREADY;
+
 	if(! (active_conn & (1UL<<index)) )
 	{
 		ERROR("Inactive connection : %u", index);
@@ -1385,7 +1399,10 @@ int16_t ll_cnx_send_data(uint8_t index, uint8_t *data, uint8_t len)
  */
 int16_t ll_cnx_terminate(uint8_t index)
 {
-	/* TODO check that we are in connection state */
+	if (! (current_state == LL_STATE_CONNECTION_MASTER ||
+				secondary_state == LL_STATE_CONNECTION_MASTER) )
+		return -ENOREADY;
+
 	if(! (active_conn & (1UL<<index)) )
 	{
 		ERROR("Inactive connection : %u", index);
