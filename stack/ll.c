@@ -567,9 +567,6 @@ static void ll_on_radio_rx(const uint8_t *pdu, bool crc, bool active)
 				timer_start(t_ll_interval,
 					ll_conn_params.conn_interval_min*1250);
 
-				radio_set_callbacks(ll_on_radio_rx,
-								ll_on_radio_tx);
-
 				/* Prepare the Data PDU that will be sent */
 				prepare_next_data_pdu(0, false, 0x00);
 
@@ -792,6 +789,11 @@ static void t_ll_single_shot_cb(void)
 		case LL_STATE_INITIATING:
 			/* Called at the end of the scan window */
 			radio_stop();
+			if(secondary_state == LL_STATE_CONNECTION_MASTER)
+			{
+				secondary_state = current_state;
+				current_state = LL_STATE_CONNECTION_MASTER;
+			}
 			break;
 
 		case LL_STATE_CONNECTION_MASTER:
@@ -804,10 +806,21 @@ static void t_ll_single_shot_cb(void)
 			if(active_conn & (1UL<<ll_current_slot))
 				ll_current_conn = ll_current_slot;
 
-			/* TODO start scan or init if a secondary state is
+			/* Start scan or init if a secondary state is
 			 * present and there is no more active connections to
 			 * process*/
+			if((1UL<<ll_current_slot) > active_conn &&
+				(secondary_state == LL_STATE_INITIATING ||
+				secondary_state == LL_STATE_SCANNING))
+			{
+				current_state = secondary_state;
+				secondary_state = LL_STATE_CONNECTION_MASTER;
+				begin_scan_init();
 
+				//TODO provide some time to stop the radio ??
+				timer_start(t_ll_single_shot,
+					timer_get_remaining_us(t_ll_interval));
+			}
 
 			/* Handle supervision timer which is reset every time a
 			 * new packet is received
@@ -872,6 +885,7 @@ static void t_ll_interval_cb(void)
 			break;
 
 		case LL_STATE_CONNECTION_MASTER:
+			radio_set_callbacks(ll_on_radio_rx, ll_on_radio_tx);
 			ll_current_slot = -1;
 			timer_start(t_ll_single_shot, LL_SLOT_WIDTH);
 			t_ll_single_shot_cb();
