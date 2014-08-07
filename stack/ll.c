@@ -159,6 +159,7 @@ struct ll_conn_context {
 
 static const bdaddr_t *laddr;
 static ll_states_t current_state;
+static ll_states_t secondary_state;
 
 #define ADV_CH_IDX_37		0
 #define ADV_CH_IDX_38		1
@@ -433,8 +434,38 @@ static void prepare_next_data_pdu(uint8_t conn_index, bool control_pdu,
 static void end_connection(uint8_t conn_index, uint8_t reason)
 {
 	active_conn &= ~(1UL<<conn_index);
-	current_state = LL_STATE_STANDBY;
 	ll_num_connections--;
+
+	if(ll_num_connections == 0)
+	{
+		switch(secondary_state) {
+		case LL_STATE_CONNECTION_MASTER:
+			secondary_state = LL_STATE_STANDBY;
+			break;
+
+		case LL_STATE_STANDBY:
+			current_state = LL_STATE_STANDBY;
+			timer_stop(t_ll_interval);
+			timer_stop(t_ll_single_shot);
+			timer_stop(t_ll_ifs);
+			break;
+
+		case LL_STATE_SCANNING:
+		case LL_STATE_INITIATING:
+			current_state = secondary_state;
+			secondary_state = LL_STATE_STANDBY;
+			timer_stop(t_ll_interval);
+			timer_stop(t_ll_single_shot);
+			timer_stop(t_ll_ifs);
+
+			timer_start(t_ll_interval, t_scan_interval,
+							t_ll_interval_cb);
+			begin_scan_init();
+			break;
+		default:
+			break;
+		}
+	}
 
 	/* Notify upper layers */
 	ble_evt_ll_disconnect_complete_t *disconn_params =
@@ -523,6 +554,7 @@ static void ll_on_radio_rx(const uint8_t *pdu, bool crc, bool active)
 					rcvd_adv_pdu->payload, BDADDR_LEN);
 
 				current_state = LL_STATE_CONNECTION_MASTER;
+				secondary_state = LL_STATE_STANDBY;
 				active_conn |= (1UL<<ll_init_conn_index);
 				ll_num_connections++;
 
@@ -1113,13 +1145,18 @@ int16_t ll_scan_start(uint8_t scan_type, uint32_t interval, uint32_t window,
 	t_scan_window = window;
 	t_scan_interval = interval;
 
-	err_code = timer_start(t_ll_interval, interval, t_ll_interval_cb);
-	if (err_code < 0)
-		return err_code;
+	if(current_state == LL_STATE_STANDBY)
+	{
+		err_code = timer_start(t_ll_interval, interval, t_ll_interval_cb);
+		if (err_code < 0)
+			return err_code;
 
-	current_state = LL_STATE_SCANNING;
+		current_state = LL_STATE_SCANNING;
 
-	t_ll_interval_cb();
+		t_ll_interval_cb();
+	}
+	else
+		secondary_state = LL_STATE_SCANNING;
 
 	DBG("interval %uus, window %uus", interval, window);
 
@@ -1132,21 +1169,28 @@ int16_t ll_scan_stop(void)
 {
 	int16_t err_code;
 
-	if (current_state != LL_STATE_SCANNING)
+	if (! (current_state == LL_STATE_SCANNING ||
+					secondary_state == LL_STATE_SCANNING) )
 		return -ENOREADY;
 
-	err_code = timer_stop(t_ll_interval);
-	if (err_code < 0)
-		return err_code;
+	if(current_state == LL_STATE_SCANNING)
+	{
+		err_code = timer_stop(t_ll_interval);
+		if (err_code < 0)
+			return err_code;
 
-	err_code = timer_stop(t_ll_single_shot);
-	if (err_code < 0)
-		return err_code;
+		err_code = timer_stop(t_ll_single_shot);
+		if (err_code < 0)
+			return err_code;
 
-	/* Call the single shot cb to stop the radio */
-	t_ll_single_shot_cb();
+		/* Call the single shot cb to stop the radio */
+		t_ll_single_shot_cb();
 
-	current_state = LL_STATE_STANDBY;
+		current_state = secondary_state;
+		secondary_state = LL_STATE_STANDBY;
+	}
+	else
+		secondary_state = LL_STATE_STANDBY;
 
 	DBG("");
 
@@ -1263,14 +1307,19 @@ int16_t ll_initiate_connection(uint32_t interval, uint32_t window,
 	t_scan_window = window;
 	t_scan_interval = interval;
 
-	int16_t err_code = timer_start(t_ll_interval, interval,
+	if(current_state == LL_STATE_STANDBY)
+	{
+		int16_t err_code = timer_start(t_ll_interval, interval,
 							t_ll_interval_cb);
-	if (err_code < 0)
-		return err_code;
+		if (err_code < 0)
+			return err_code;
 
-	current_state = LL_STATE_INITIATING;
+		current_state = LL_STATE_INITIATING;
 
-	t_ll_interval_cb();
+		t_ll_interval_cb();
+	}
+	else
+		secondary_state = LL_STATE_INITIATING;
 
 	DBG("interval %uus, window %uus", interval, window);
 
@@ -1281,16 +1330,23 @@ int16_t ll_initiate_connection(uint32_t interval, uint32_t window,
  */
 int16_t ll_initiate_cancel(void)
 {
-	if (current_state != LL_STATE_INITIATING)
+	if (! (current_state == LL_STATE_INITIATING ||
+				secondary_state == LL_STATE_INITIATING) )
 		return -ENOREADY;
 
-	timer_stop(t_ll_interval);
-	timer_stop(t_ll_single_shot);
-	timer_stop(t_ll_ifs);
+	if(current_state == LL_STATE_INITIATING)
+	{
+		timer_stop(t_ll_interval);
+		timer_stop(t_ll_single_shot);
+		timer_stop(t_ll_ifs);
 
-	radio_stop();
+		radio_stop();
 
-	current_state = LL_STATE_STANDBY;
+		current_state = secondary_state;
+		secondary_state = LL_STATE_STANDBY;
+	}
+	else
+		secondary_state = LL_STATE_STANDBY;
 
 	DBG("");
 
