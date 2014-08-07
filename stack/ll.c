@@ -179,6 +179,7 @@ static uint8_t data_ch_used[37];
 
 static uint32_t t_adv_pdu_interval;
 static uint32_t t_scan_window;
+static uint32_t t_scan_interval;
 
 static struct ll_pdu_adv pdu_adv;
 static struct ll_pdu_adv pdu_scan_rsp;
@@ -233,6 +234,7 @@ static uint8_t ll_conn_evt_params[BLE_EVT_PARAMS_MAX_SIZE];
 
 /* Forward-declarations */
 static void ll_on_radio_tx(bool active);
+static __inline void begin_scan_init(void);
 
 static __inline void send_scan_rsp(const struct ll_pdu_adv *pdu)
 {
@@ -683,6 +685,24 @@ static __inline int16_t inc_adv_ch_idx(void)
 	return 0;
 }
 
+/* Begin scan/init operations */
+static __inline void begin_scan_init(void)
+{
+	radio_set_callbacks(ll_on_radio_rx, NULL);
+
+	if(!inc_adv_ch_idx())
+		adv_ch_idx = first_adv_ch_idx();
+
+	radio_prepare(adv_chs[adv_ch_idx],
+					LL_ACCESS_ADDRESS_ADV, LL_CRCINIT_ADV);
+
+	if(current_state == LL_STATE_INITIATING) {
+		radio_recv(RADIO_FLAGS_TX_NEXT);
+		radio_set_out_buffer((uint8_t*)&pdu_connect_req);
+	} else
+		radio_recv(0);
+}
+
 /**@brief Function that implement the Data channel index selection
  * Used in connection states to determine the BLE channel to use for the next
  * connection event.
@@ -758,18 +778,7 @@ static void t_ll_interval_cb(void)
 
 		case LL_STATE_SCANNING:
 		case LL_STATE_INITIATING:
-			if(!inc_adv_ch_idx())
-				adv_ch_idx = first_adv_ch_idx();
-
-			radio_prepare(adv_chs[adv_ch_idx],
-					LL_ACCESS_ADDRESS_ADV, LL_CRCINIT_ADV);
-
-			if(current_state == LL_STATE_INITIATING) {
-				radio_recv(RADIO_FLAGS_TX_NEXT);
-				radio_set_out_buffer((uint8_t*)&pdu_connect_req);
-			} else
-				radio_recv(0);
-
+			begin_scan_init();
 			timer_start(t_ll_single_shot, t_scan_window,
 							t_ll_single_shot_cb);
 			break;
@@ -1101,15 +1110,15 @@ int16_t ll_scan_start(uint8_t scan_type, uint32_t interval, uint32_t window,
 			return -EINVAL;
 	}
 
-	radio_set_callbacks(ll_on_radio_rx, NULL);
-
-	/* Setup timer and save window length */
 	t_scan_window = window;
+	t_scan_interval = interval;
+
 	err_code = timer_start(t_ll_interval, interval, t_ll_interval_cb);
 	if (err_code < 0)
 		return err_code;
 
 	current_state = LL_STATE_SCANNING;
+
 	t_ll_interval_cb();
 
 	DBG("interval %uus, window %uus", interval, window);
@@ -1249,17 +1258,18 @@ int16_t ll_initiate_connection(uint32_t interval, uint32_t window,
 	init_connection_context(conn_index);
 	ll_conn_contexts[conn_index].rx_buffer = rx_buf;
 
-	radio_set_callbacks(ll_on_radio_rx, NULL);
-
 	/* Initiating state :
 	 * see Link Layer specification Section 4.4.4, Core v4.1 p.2537 */
 	t_scan_window = window;
+	t_scan_interval = interval;
+
 	int16_t err_code = timer_start(t_ll_interval, interval,
 							t_ll_interval_cb);
 	if (err_code < 0)
 		return err_code;
 
 	current_state = LL_STATE_INITIATING;
+
 	t_ll_interval_cb();
 
 	DBG("interval %uus, window %uus", interval, window);
