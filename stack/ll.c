@@ -57,6 +57,17 @@
  * store a map of active connections */
 #define LL_MAX_SIMULTANEOUS_CONNECTIONS	2
 
+/* With simultaneous connections, define the width of the time slot allowed for
+ * each connection event, i.e. the time between the connection events of two
+ * consecutive connections.
+ *
+ * LL spec section 2.1, Core 4.1 p. 2503 :
+ * For 2 full packets (TX + RX), we need 2*(376 bits / 10^6 bits/s) + 2*T_IFS
+ * i.e. 752+300 = 1052 us.
+ *
+ * With 600 us, 300 bits can be exchanged (~17 bytes of useful payload)  */
+#define LL_SLOT_WIDTH			1000
+
 /* Link Layer specification Section 1.1, Core 4.1 page 2499 */
 typedef enum ll_states {
 	LL_STATE_STANDBY,
@@ -197,6 +208,8 @@ static uint8_t ll_num_connections = 0;
 static uint8_t ll_init_conn_index;
 /* Current connection being processed */
 static uint8_t ll_current_conn;
+/* Current slot inside the main connection interval */
+static uint8_t ll_current_slot;
 
 /*Internal pointer to an array of accepted peer addresses */
 static bdaddr_t *ll_peer_addresses;
@@ -793,38 +806,27 @@ static void t_ll_single_shot_cb(void)
 			break;
 
 		case LL_STATE_CONNECTION_MASTER:
-		case LL_STATE_CONNECTION_SLAVE:
-			/* Not implemented */
-		case LL_STATE_STANDBY:
-		default:
-			/* Nothing to do */
-			return;
-	}
-}
-
-/** Callback function for the "interval" LL timer
- */
-static void t_ll_interval_cb(void)
-{
-	switch(current_state) {
-		case LL_STATE_ADVERTISING:
-			adv_ch_idx = first_adv_ch_idx();
-			t_ll_single_shot_cb();
-			break;
-
-		case LL_STATE_SCANNING:
-		case LL_STATE_INITIATING:
-			begin_scan_init();
-			timer_start(t_ll_single_shot, t_scan_window,
-							t_ll_single_shot_cb);
-			break;
-
-		case LL_STATE_CONNECTION_MASTER:
 			/* LL spec, section 4.5, Core v4.1 p.2537-2547
 			 * LL spec, Section 2.4, Core 4.1 page 2511
 			 */
 
-			ll_current_conn = 0;
+			ll_current_slot++;
+
+			if (active_conn >= (1UL<<ll_current_slot))
+				/* There is an active connection in an upcoming
+				 * slot */
+				timer_start(t_ll_single_shot, LL_SLOT_WIDTH,
+							t_ll_single_shot_cb);
+			else
+				/* TODO start scan or init if a secondary state
+				 * is present */
+				break;
+
+			if (active_conn & (1UL<<ll_current_slot))
+				/* TODO check that the previous CE is finished */
+				ll_current_conn = ll_current_slot;
+			else
+				break;
 
 			/* Handle supervision timer which is reset every time a
 			 * new packet is received
@@ -861,6 +863,37 @@ static void t_ll_interval_cb(void)
 
 			/* Next step : ll_on_radio_rx (receive a packet from
 			 * the slave) or t_ll_ifs_cb (RX timeout) */
+			break;
+
+		case LL_STATE_CONNECTION_SLAVE:
+			/* Not implemented */
+		case LL_STATE_STANDBY:
+		default:
+			/* Nothing to do */
+			return;
+	}
+}
+
+/** Callback function for the "interval" LL timer
+ */
+static void t_ll_interval_cb(void)
+{
+	switch(current_state) {
+		case LL_STATE_ADVERTISING:
+			adv_ch_idx = first_adv_ch_idx();
+			t_ll_single_shot_cb();
+			break;
+
+		case LL_STATE_SCANNING:
+		case LL_STATE_INITIATING:
+			begin_scan_init();
+			timer_start(t_ll_single_shot, t_scan_window,
+							t_ll_single_shot_cb);
+			break;
+
+		case LL_STATE_CONNECTION_MASTER:
+			ll_current_slot = -1;
+			t_ll_single_shot_cb();
 			break;
 
 		case LL_STATE_CONNECTION_SLAVE:
