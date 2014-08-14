@@ -501,6 +501,7 @@ static void ll_on_radio_rx(const uint8_t *pdu, bool crc, bool active)
 {
 	struct ll_pdu_adv *rcvd_adv_pdu;
 	struct ll_pdu_data *rcvd_data_pdu;
+	struct ll_pdu_connect_payload *conn_req_payload;
 	ble_evt_ll_connection_complete_t *conn_complete_params =
 			(ble_evt_ll_connection_complete_t*)ll_conn_evt_params;
 	ble_evt_ll_packets_received_t *packets_rx_params =
@@ -568,18 +569,29 @@ static void ll_on_radio_rx(const uint8_t *pdu, bool crc, bool active)
 				/* Complete CONNECT_REQ PDU with the
 				 * advertiser's address
 				 */
+				conn_req_payload =
+						(struct ll_pdu_connect_payload*)
+						(pdu_connect_req.payload);
+
 				pdu_connect_req.rx_add = rcvd_adv_pdu->tx_add;
-				memcpy(pdu_connect_req.payload+BDADDR_LEN,
+				memcpy(conn_req_payload->adv_add,
 					rcvd_adv_pdu->payload, BDADDR_LEN);
+
+				/* Handle first connection event timing */
+				if (ll_num_connections == 0)
+					timer_start(t_ll_interval,
+					ll_conn_params.conn_interval_min*1250,
+							t_ll_interval_cb);
+				else
+					conn_req_payload->win_offset =
+					((timer_get_remaining_us(t_ll_interval)
+					+ ll_init_conn_index * LL_SLOT_WIDTH)
+								/ 1250 )- 3;
 
 				current_state = LL_STATE_CONNECTION_MASTER;
 				secondary_state = LL_STATE_STANDBY;
 				active_conn |= (1UL<<ll_init_conn_index);
 				ll_num_connections++;
-
-				timer_start(t_ll_interval,
-					ll_conn_params.conn_interval_min*1250,
-							t_ll_interval_cb);
 
 				/* Prepare the Data PDU that will be sent */
 				prepare_next_data_pdu(0, false, 0x00);
@@ -1110,10 +1122,11 @@ static void init_connection_context(uint8_t conn_index)
 	else
 		payload->win_size = ll_conn_params.conn_interval_min-1;
 	/* The interval timer is set to fire every conn_interval_min just
-	 * after the CONNECT_REQ PDU is sent. We set the offset to
-	 * conn_interval_min - 3 to keep a wide window almost centered on the
-	 * first timer event.
-	 */
+	 * after the CONNECT_REQ PDU is sent if this is the first connection.
+	 * We set the offset to conn_interval_min - 3 to keep a wide window
+	 * almost centered on the first timer event.
+	 * If this is not the first connection, this value will be updated when
+	 * the PDU is sent. */
 	payload->win_offset = ll_conn_params.conn_interval_min-3;
 
 	payload->interval = ll_conn_params.conn_interval_min;
