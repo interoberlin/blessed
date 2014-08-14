@@ -68,6 +68,10 @@
  * With 600 us, 300 bits can be exchanged (~17 bytes of useful payload)  */
 #define LL_SLOT_WIDTH			1000
 
+/* Time needed to stop scanning/initiating operations before starting a new
+ * connection event */
+#define LL_STOP_SCAN_TIME		500
+
 /* Link Layer specification Section 1.1, Core 4.1 page 2499 */
 typedef enum ll_states {
 	LL_STATE_STANDBY,
@@ -577,9 +581,6 @@ static void ll_on_radio_rx(const uint8_t *pdu, bool crc, bool active)
 					ll_conn_params.conn_interval_min*1250,
 							t_ll_interval_cb);
 
-				radio_set_callbacks(ll_on_radio_rx,
-								ll_on_radio_tx);
-
 				/* Prepare the Data PDU that will be sent */
 				prepare_next_data_pdu(0, false, 0x00);
 
@@ -803,6 +804,10 @@ static void t_ll_single_shot_cb(void)
 		case LL_STATE_INITIATING:
 			/* Called at the end of the scan window */
 			radio_stop();
+			if (secondary_state == LL_STATE_CONNECTION_MASTER) {
+				secondary_state = current_state;
+				current_state = LL_STATE_CONNECTION_MASTER;
+			}
 			break;
 
 		case LL_STATE_CONNECTION_MASTER:
@@ -817,10 +822,24 @@ static void t_ll_single_shot_cb(void)
 				 * slot */
 				timer_start(t_ll_single_shot, LL_SLOT_WIDTH,
 							t_ll_single_shot_cb);
-			else
-				/* TODO start scan or init if a secondary state
+			else {
+				/* Start scan or init if a secondary state
 				 * is present */
+				/* TODO check that there is enough time
+				 * remaining */
+				if (secondary_state == LL_STATE_INITIATING ||
+					secondary_state == LL_STATE_SCANNING) {
+					current_state = secondary_state;
+					secondary_state =
+						LL_STATE_CONNECTION_MASTER;
+					begin_scan_init();
+					timer_start(t_ll_single_shot,
+					timer_get_remaining_us(t_ll_interval)
+							- LL_STOP_SCAN_TIME,
+							t_ll_single_shot_cb);
+				}
 				break;
+			}
 
 			if (active_conn & (1UL<<ll_current_slot))
 				/* TODO check that the previous CE is finished */
@@ -892,6 +911,7 @@ static void t_ll_interval_cb(void)
 			break;
 
 		case LL_STATE_CONNECTION_MASTER:
+			radio_set_callbacks(ll_on_radio_rx, ll_on_radio_tx);
 			ll_current_slot = -1;
 			t_ll_single_shot_cb();
 			break;
