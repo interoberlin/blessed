@@ -635,7 +635,7 @@ static void ll_on_radio_rx(const uint8_t *pdu, bool crc, bool active)
 							rcvd_data_pdu->length);
 					/* Send an event to upper layers to
 					 * notify that new data is available */
-					packets_rx_params->index = 0;
+					packets_rx_params->index = ll_current_conn;
 					packets_rx_params->length =
 						ll_conn_contexts[ll_current_conn].rx_length;
 					ll_conn_evt_cb(BLE_EVT_LL_PACKETS_RECEIVED,
