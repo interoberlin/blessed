@@ -596,10 +596,12 @@ static void ll_on_radio_rx(const uint8_t *pdu, bool crc, bool active)
 				ll_num_connections++;
 
 				/* Prepare the Data PDU that will be sent */
-				prepare_next_data_pdu(0, false, 0x00);
+				prepare_next_data_pdu(ll_init_conn_index,
+								false, 0x00);
 
 				/* Send an event to the upper layers */
-				conn_complete_params->index = 0;
+				conn_complete_params->index =
+							ll_init_conn_index;
 				conn_complete_params->peer_addr.type =
 							rcvd_adv_pdu->tx_add;
 				memcpy(conn_complete_params->peer_addr.addr,
