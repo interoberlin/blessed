@@ -86,6 +86,7 @@ static __inline void update_cc(uint8_t id, uint32_t ticks)
 
 	get_clr_set_masks(id, &clr_mask, &set_mask);
 
+	NRF_TIMER0->EVENTS_COMPARE[id] = 0UL;
 	NRF_TIMER0->CC[id] = ticks;
 	NRF_TIMER0->INTENSET = set_mask;
 }
