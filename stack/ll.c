@@ -564,7 +564,9 @@ static void ll_on_radio_rx(const uint8_t *pdu, bool crc, bool active)
 					rcvd_adv_pdu->payload+BDADDR_LEN)) )
 			{
 				timer_stop(t_ll_single_shot);
-				timer_stop(t_ll_interval);
+
+				if (secondary_state == LL_STATE_STANDBY)
+					timer_stop(t_ll_interval);
 
 				/* Complete CONNECT_REQ PDU with the
 				 * advertiser's address
@@ -1256,16 +1258,17 @@ int16_t ll_scan_stop(void)
 
 	if(current_state == LL_STATE_SCANNING)
 	{
-		err_code = timer_stop(t_ll_interval);
-		if (err_code < 0)
-			return err_code;
+		if (secondary_state == LL_STATE_STANDBY) {
+			err_code = timer_stop(t_ll_interval);
+			if (err_code < 0)
+				return err_code;
+		}
 
 		err_code = timer_stop(t_ll_single_shot);
 		if (err_code < 0)
 			return err_code;
 
-		/* Call the single shot cb to stop the radio */
-		t_ll_single_shot_cb();
+		radio_stop();
 
 		current_state = secondary_state;
 		secondary_state = LL_STATE_STANDBY;
@@ -1422,7 +1425,9 @@ int16_t ll_initiate_cancel(void)
 
 	if(current_state == LL_STATE_INITIATING)
 	{
-		timer_stop(t_ll_interval);
+		if (secondary_state == LL_STATE_STANDBY)
+			timer_stop(t_ll_interval);
+
 		timer_stop(t_ll_single_shot);
 		timer_stop(t_ll_ifs);
 
